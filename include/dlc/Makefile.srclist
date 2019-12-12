@@ -1,0 +1,6 @@
+# ./include/dlc/Makefile.inc
+
+CFD_DLC_PKGINCLUDE_FILES = \
+  dlc_exception.h \
+  dlc_transactions.h \
+  dlc_util.h

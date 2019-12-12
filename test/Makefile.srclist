@@ -1,0 +1,3 @@
+TEST_CFD_DLC_SOURCES = \
+    test_dlc_transactions.cpp \
+    test_dlc_util.cpp
