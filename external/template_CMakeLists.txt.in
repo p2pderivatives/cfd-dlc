@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.1)
+
+project(${TEMPLATE_PROJECT_NAME}-download NONE)
+include(ExternalProject)
+
+ExternalProject_Add(
+  ### Target name
+  ${TEMPLATE_PROJECT_NAME}-download
+  ### Path to Git repository
+  GIT_REPOSITORY ${TEMPLATE_PROJECT_GIT_REPOSITORY}
+  ### Specify TAG
+  GIT_TAG ${TEMPLATE_PROJECT_GIT_TAG}
+  ### Path to source tree
+  PREFIX            ""
+  SOURCE_DIR        ${CMAKE_SOURCE_DIR}/external/${TEMPLATE_PROJECT_NAME}
+  BINARY_DIR        ${CFD_DLC_ROOT_BINARY_DIR}/${TEMPLATE_PROJECT_NAME}/build
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND     ""
+  INSTALL_COMMAND   ""
+  TEST_COMMAND      ""
+)
