@@ -1,0 +1,3 @@
+CFDDLC_SOURCES = \
+  cfddlc_transactions.cpp \
+  cfddlc_util.cpp

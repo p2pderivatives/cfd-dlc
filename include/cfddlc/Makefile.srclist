@@ -1,0 +1,7 @@
+# ./include/dlc/Makefile.inc
+
+CFDDLC_PKGINCLUDE_FILES = \
+  cfddlc_common.h \
+  cfddlc_exception.h \
+  cfddlc_transactions.h \
+  cfddlc_util.h
