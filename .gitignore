@@ -30,3 +30,10 @@
 *.exe
 *.out
 *.app
+
+# build cache
+build/
+external/cfd-core
+external/cfd
+external/googletest
+external/libwally-core
