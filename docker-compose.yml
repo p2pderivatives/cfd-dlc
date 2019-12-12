@@ -1,0 +1,11 @@
+version: '3'
+
+services:
+  coverage:
+    container_name: 'cfd-dlc_coverage'
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - "./:/tmp/workspace/cfd/"
+    command: bash -c "git submodule update --init --recursive && ./scripts/run_coverage.sh"
