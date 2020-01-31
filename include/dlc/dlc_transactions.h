@@ -769,9 +769,6 @@ class DlcManager {
   static Privkey DerivePenaltyTxPrivkey(const ExtPrivkey& parent_key);
 
  private:
-  static Amount ComputeFee(uint32_t fee_rate,
-                           const TransactionController& transaction);
-
   static TransactionController CreateFundTransaction(
       const ExtPubkey& local_ext_pubkey, const ExtPubkey& remote_ext_pubkey,
       const Amount& local_input_amount, const Amount& local_collateral_amount,

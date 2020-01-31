@@ -1021,12 +1021,6 @@ Privkey DlcManager::DerivePenaltyTxPrivkey(const ExtPrivkey& parent_key) {
   return parent_key.DerivePrivkey(2).DerivePrivkey(2).GetPrivkey();
 }
 
-Amount DlcManager::ComputeFee(uint32_t fee_rate,
-                              const TransactionController& transaction) {
-  return Amount::CreateBySatoshiAmount(transaction.GetTransaction().GetVsize() *
-                                       fee_rate);
-}
-
 uint32_t DlcManager::GetTotalInputSize(const std::vector<TxIn>& inputs) {
   uint32_t total_size = 0;
   for (auto it = inputs.begin(); it != inputs.end(); ++it) {
