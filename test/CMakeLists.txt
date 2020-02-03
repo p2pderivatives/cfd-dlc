@@ -5,6 +5,7 @@ cmake_policy(SET CMP0076 NEW)
 ####################
 # options
 ####################
+option(ENABLE_SHARED "enable shared library (ON or OFF. default:ON)" ON)
 option(ENABLE_DEBUG "enable debugging (ON or OFF. default:OFF)" OFF)
 
 if(NOT WIN32)
@@ -71,10 +72,44 @@ set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -O0 -ggdb")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -ggdb")
 endif()
 
-set(LIBWALLY_LIBRARY wally)
-set(CFDCORE_LIBRARY cfdcore)
-set(CFD_LIBRARY cfd)
 set(CFD_DLC_LIBRARY cfddlc)
+
+# search cfd with PkgConfig.
+find_package(PkgConfig)
+if(PKG_CONFIG_FOUND)
+pkg_check_modules(CFD cfd)
+if(NOT CFD_FOUND)
+set(CFD_INSTALLED   FALSE)
+else()  # PkgConfig
+set(CFD_INSTALLED   ${CFD_FOUND})
+endif()
+else()
+set(CFD_INSTALLED   FALSE)
+endif()
+
+if(WIN32 OR (NOT ${CFD_INSTALLED}))
+set(USE_INSTALLED_LIBRARY  FALSE)
+set(LIBWALLY_LIBRARY wally)
+set(CFD_LIBRARY cfd)
+set(CFDCORE_LIBRARY cfdcore)
+set(UNIVALUE_LIBRARY univalue)
+set(INSTALLED_LIBRARY_DIR "")
+set(INSTALLED_INCLUDE_DIR "./")
+else()
+set(USE_INSTALLED_LIBRARY  TRUE)
+pkg_check_modules(WALLY     REQUIRED wally)
+pkg_check_modules(CFDCORE   REQUIRED cfd-core)
+pkg_check_modules(LIBUNIVALUE  REQUIRED libunivalue)
+set(CFD_LIBRARY ${CFD_LIBRARIES})
+set(CFDCORE_LIBRARY ${CFDCORE_LIBRARIES})
+set(LIBWALLY_LIBRARY ${WALLY_LIBRARIES})
+set(UNIVALUE_LIBRARY ${LIBUNIVALUE_LIBRARIES})
+
+set(INSTALLED_LIBRARY_DIR ${CFD_LIBRARY_DIRS})
+set(INSTALLED_INCLUDE_DIR ${CFD_INCLUDE_DIRS})
+message(STATUS "[UNIVALUE_LIBRARY]=${UNIVALUE_LIBRARY}")
+endif() # WIN32 OR (NOT ${CFDJS_API_FOUND})
+
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -124,11 +159,13 @@ target_include_directories(${PROJECT_NAME}
     .
     ../src
     ${CFD_DLC_SRC_ROOT_DIR}/external/cfd-core/src/include
+    ${INSTALLED_INCLUDE_DIR}
 )
 
 target_link_directories(${PROJECT_NAME}
   PRIVATE
     ./
+    ${INSTALLED_LIBRARY_DIR}
 )
 
 target_link_libraries(${PROJECT_NAME}
@@ -143,7 +180,7 @@ target_link_libraries(${PROJECT_NAME}
     ${CFDCORE_LIBRARY}
     ${CFD_LIBRARY}
     ${CFD_DLC_LIBRARY}
-    univalue
+    ${UNIVALUE_LIBRARY}
     gtest_main
     gmock
 )

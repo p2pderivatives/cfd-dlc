@@ -11,6 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 ####################
 # options
 ####################
+option(ENABLE_SHARED "enable shared library (ON or OFF. default:ON)" ON)
 option(ENABLE_TESTS "enable code tests (ON or OFF. default:ON)" ON)
 if(NOT WIN32)
 #option(TARGET_RPATH "target rpath list (separator is ';') (default:)" "")

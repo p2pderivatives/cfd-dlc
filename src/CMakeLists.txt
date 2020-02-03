@@ -93,9 +93,6 @@ set(USE_SCALAR_4X64 true)
 project(cfddlc CXX)
 # set(LIBRARY_PREFIX $<IF:$<PLATFORM_ID:Windows>,,lib>)
 # set(LIBRARY_SUFFIX $<IF:$<PLATFORM_ID:Windows>,dll,$<IF:$<PLATFORM_ID:Darwin>,dylib,so>>)
-set(LIBWALLY_LIBRARY wally)
-set(CFD_LIBRARY cfd)
-set(CFDCORE_LIBRARY cfdcore)
 
 if(MSVC)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Od /Zi")
@@ -106,6 +103,44 @@ endif()
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# search cfd with PkgConfig.
+find_package(PkgConfig)
+if(PKG_CONFIG_FOUND)
+pkg_check_modules(LIBCFD cfd)
+if(NOT CFD_FOUND)
+set(CFD_INSTALLED   FALSE)
+else()  # PkgConfig
+set(CFD_INSTALLED   ${CFD_FOUND})
+endif()
+else()
+set(CFD_INSTALLED   OFF)
+endif()
+
+if(WIN32 OR (NOT ${CFD_INSTALLED}))
+set(USE_INSTALLED_LIBRARY  FALSE)
+set(LIBWALLY_LIBRARY wally)
+set(CFD_LIBRARY cfd)
+set(CFDCORE_LIBRARY cfdcore)
+set(INSTALLED_LIBRARY_DIR "")
+set(INSTALLED_INCLUDE_DIR "./")
+else()
+set(USE_INSTALLED_LIBRARY  TRUE)
+pkg_check_modules(WALLY     REQUIRED wally)
+pkg_check_modules(CFDCORE   REQUIRED cfd-core)
+pkg_check_modules(LIBUNIVALUE  REQUIRED libunivalue)
+set(CFD_LIBRARY ${CFD_LIBRARIES})
+set(CFDCORE_LIBRARY ${CFDCORE_LIBRARIES})
+set(LIBWALLY_LIBRARY ${WALLY_LIBRARIES})
+set(UNIVALUE_LIBRARY ${LIBUNIVALUE_LIBRARIES})
+
+set(INSTALLED_LIBRARY_DIR ${CFD_LIBRARY_DIRS})
+set(INSTALLED_INCLUDE_DIR ${CFD_INCLUDE_DIRS})
+message(STATUS "[INSTALLED_LIBRARY_DIR]=${INSTALLED_LIBRARY_DIR}")
+message(STATUS "[INSTALLED_INCLUDE_DIR]=${INSTALLED_INCLUDE_DIR}")
+endif() # WIN32 OR (NOT ${CFDJS_API_FOUND})
+
+
 if(ENABLE_SHARED)
 add_library(${PROJECT_NAME} SHARED)
 else()
@@ -138,11 +173,13 @@ target_include_directories(${PROJECT_NAME}
   PRIVATE
     .
     include
+    ${INSTALLED_INCLUDE_DIR}
 )
 
 target_link_directories(${PROJECT_NAME}
   PRIVATE
     ./
+    ${INSTALLED_LIBRARY_DIR}
 )
 
 target_link_libraries(${PROJECT_NAME}

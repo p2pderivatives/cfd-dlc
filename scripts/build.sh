@@ -1,5 +1,5 @@
 #!/bin/bash
 cmake -S . -B build
 pushd build
-make
+make -j 4
 popd
