@@ -127,10 +127,20 @@ target_compile_options(${PROJECT_NAME}
     >
     $<$<BOOL:$<CXX_COMPILER_ID:GNU>>:${STACK_PROTECTOR_OPT}>
 )
+
+if(ENABLE_SHARED)
+target_compile_definitions(${PROJECT_NAME}
+  PRIVATE
+    CFD_DLC_BUILD=1
+    CFD_SHARED=1
+    CFD_CORE_SHARED=1
+)
+else()
 target_compile_definitions(${PROJECT_NAME}
   PRIVATE
     CFD_DLC_BUILD=1
 )
+endif()
 
 target_include_directories(${PROJECT_NAME}
   PUBLIC
