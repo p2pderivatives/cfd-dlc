@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "cfdcore/cfdcore_key.h"
+#include "dlc/dlc_common.h"
 #include "secp256k1.h"  // NOLINT
 
 namespace cfd {

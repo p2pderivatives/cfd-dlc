@@ -100,6 +100,7 @@ target_compile_options(${PROJECT_NAME}
 )
 target_compile_definitions(${PROJECT_NAME}
   PRIVATE
+    CFDDLC_SHARED=1
     CFD_SHARED=1
     CFD_CORE_SHARED=1
 )

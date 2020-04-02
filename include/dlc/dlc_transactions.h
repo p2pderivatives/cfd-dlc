@@ -9,6 +9,7 @@
 #include "cfd/cfd_transaction.h"
 #include "cfdcore/cfdcore_address.h"
 #include "cfdcore/cfdcore_hdwallet.h"
+#include "dlc/dlc_common.h"
 
 namespace cfd {
 namespace dlc {
@@ -52,7 +53,7 @@ struct DlcOutcome {
  * @brief Class providing utility functions to create DLC transactions.
  *
  */
-class DlcManager {
+class CFD_DLC_EXPORT DlcManager {
  public:
   /**
    * @brief Create a Cet object
