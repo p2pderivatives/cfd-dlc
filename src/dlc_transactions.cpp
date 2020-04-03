@@ -1,5 +1,7 @@
 // Copyright 2019 CryptoGarage
 
+#include "dlc/dlc_transactions.h"
+
 #include <algorithm>
 #include <cstring>
 #include <vector>
@@ -11,11 +13,9 @@
 #include "cfdcore/cfdcore_script.h"
 #include "cfdcore/cfdcore_transaction.h"
 #include "cfdcore/cfdcore_util.h"
-#include "secp256k1.h"  // NOLINT
-
 #include "dlc/dlc_exception.h"
-#include "dlc/dlc_transactions.h"
 #include "dlc/dlc_util.h"
+#include "secp256k1.h"  // NOLINT
 
 namespace cfd {
 namespace dlc {
@@ -152,8 +152,8 @@ TransactionController DlcManager::CreateFundTransaction(
   uint32_t common_size = fund_tx.GetSizeIgnoreTxIn();
   uint32_t local_input_size = GetTotalInputVSize(local_inputs);
   uint32_t remote_input_size = GetTotalInputVSize(remote_inputs);
-  auto local_fund_fee = common_size / 2 + local_input_size;
-  auto remote_fund_fee = common_size / 2 + remote_input_size;
+  auto local_fund_fee = (common_size / 2 + local_input_size) * fee_rate;
+  auto remote_fund_fee = (common_size / 2 + remote_input_size) * fee_rate;
 
   local_change = local_change - local_fund_fee;
   remote_change = remote_change - remote_fund_fee;
