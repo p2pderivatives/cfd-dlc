@@ -18,7 +18,7 @@ using cfd::core::ByteData256;
 using cfd::core::Privkey;
 using cfd::core::Pubkey;
 
-class DlcUtil {
+class CFD_DLC_EXPORT DlcUtil {
  public:
   static Pubkey GetCommittedKey(const Pubkey& oracle_pub_key,
                                 const std::vector<Pubkey>& oracle_r_points,
