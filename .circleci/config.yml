@@ -1,0 +1,56 @@
+version: 2.1
+jobs:
+  lint:
+    working_directory: ~/cfd-dlc
+    docker:
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+
+    steps:
+      - checkout
+      - run: "./scripts/lint_quiet.sh"
+      - run: "cd doc && doxygen Doxyfile_quiet_all"
+
+  build:
+    docker:
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+    steps:
+      - checkout
+      - run:
+          command: ./scripts/build.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+  test:
+    docker:
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          command: ./scripts/run_cfddlc_tests.sh
+
+  coverage:
+    docker:
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+    steps:
+      - checkout
+      - run:
+          command: |
+            apt-get update
+            apt-get install -y lcov
+            ./scripts/run_coverage.sh
+      - store_artifacts:
+          path: ./build_coverage/lcov_cfddlc_output
+          destination: raw-test-output
+
+workflows:
+  version: 2.1
+  lint-build-test-coverage:
+    jobs:
+      - lint
+      - build
+      - test:
+          requires:
+            - build
+      - coverage
