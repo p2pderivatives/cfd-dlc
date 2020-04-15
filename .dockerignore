@@ -1,0 +1,11 @@
+# exclude build folder
+build
+doc
+
+# exclude external folders
+external/*
+!external/CMakeLists.txt
+!external/template_CMakeLists.txt.in
+
+# exclude docker file
+Dockerfile
