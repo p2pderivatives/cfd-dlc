@@ -1,3 +1,5 @@
+# Mac DS_Store
+*.DS_Store
 # Prerequisites
 *.d
 
@@ -33,7 +35,12 @@
 
 # build cache
 build/
+build_coverage/
 external/cfd-core
 external/cfd
 external/googletest
 external/libwally-core
+
+# generated doc
+doc/html*
+doc/latex
