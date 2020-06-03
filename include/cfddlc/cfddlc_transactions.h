@@ -97,8 +97,8 @@ class CFD_DLC_EXPORT DlcManager {
    * @param oracle_r_points the r points with which the oracle will sign the
    * outcome message.
    * @param messages the messages that this CET is for.
-   * @param delay the number of blocks after which the penalty transaction can
-   * be used.
+   * @param csv_delay the number of blocks after which the penalty transaction
+   * can be used.
    * @param local_payout the payout to the local party.
    * @param remote_payout the payout the the remote party.
    * @param maturity_time the maturity time of the contract before which the
@@ -113,7 +113,7 @@ class CFD_DLC_EXPORT DlcManager {
       const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
       const Pubkey& remote_sweep_pubkey, const Address& remote_final_address,
       const Pubkey& oracle_pubkey, const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint64_t delay,
+      const std::vector<std::string>& messages, uint64_t csv_delay,
       const Amount& local_payout, const Amount& remote_payout,
       uint32_t maturity_time, uint32_t fee_rate, const Txid& fund_tx_id,
       uint32_t fund_vout = 0);
@@ -338,7 +338,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @param oracle_public_key the oracle public key.
    * @param oracle_r_points the oracle r points.
    * @param messages the messages representing the contract outcome.
-   * @param delay the delay after which the remote party can take over the
+   * @param csv_delay the delay after which the remote party can take over the
    * funds.
    * @param oracle_sigs the oracle signatures over the messages.
    * @param value the value of the CET output.
@@ -350,7 +350,7 @@ class CFD_DLC_EXPORT DlcManager {
       const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
       const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_public_key,
       const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t delay,
+      const std::vector<std::string>& messages, uint32_t csv_delay,
       const std::vector<ByteData>& oracle_sigs, const Amount& value,
       const Txid& cet_tx_id, uint32_t cet_vout = 0);
 
@@ -397,7 +397,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @param oracle_public_key the oracle public key.
    * @param oracle_r_points the oracle r points.
    * @param messages the messages signed by the oracle.
-   * @param delay the delay after which the remote party can claim the local
+   * @param csv_delay the delay after which the remote party can claim the local
    * party output.
    * @param value the output value.
    * @param cet_tx_id the id of the CET.
@@ -408,7 +408,7 @@ class CFD_DLC_EXPORT DlcManager {
       const Privkey& remote_sweep_privkey, const Pubkey& local_fund_pubkey,
       const Pubkey& local_sweep_pubkey, const Pubkey& oracle_public_key,
       const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t delay,
+      const std::vector<std::string>& messages, uint32_t csv_delay,
       const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout = 0);
 
   /**
@@ -436,7 +436,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @param oracle_pubkey the public key of the oracle.
    * @param oracle_r_points the oracle r points.
    * @param messages the messages signed by the oracle.
-   * @param delay the delay after which the remote party can claim the local
+   * @param csv_delay the delay after which the remote party can claim the local
    * party output.
    * @param oracle_sigs the signatures from the oracle.
    * @param value the value in the CET output.
@@ -449,7 +449,7 @@ class CFD_DLC_EXPORT DlcManager {
       const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
       const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
       const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t delay,
+      const std::vector<std::string>& messages, uint32_t csv_delay,
       const std::vector<ByteData>& oracle_sigs, const Amount& value,
       const Txid& cet_tx_id, uint32_t cet_vout = 0);
 
@@ -483,7 +483,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @param oracle_pubkey the public key of the oracle.
    * @param oracle_r_points the oracle r points.
    * @param messages the messages signed by the oracle.
-   * @param delay the delay after which the remote party can claim the local
+   * @param csv_delay the delay after which the remote party can claim the local
    * party output.
    * @param value the value in the CET output.
    * @param cet_tx_id the id of the CET.
@@ -495,7 +495,7 @@ class CFD_DLC_EXPORT DlcManager {
       const Privkey& remote_sweep_privkey, const Pubkey& local_fund_pubkey,
       const Pubkey& local_sweep_pubkey, const Pubkey& oracle_pubkey,
       const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t delay,
+      const std::vector<std::string>& messages, uint32_t csv_delay,
       const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout = 0);
 
   /**
@@ -867,7 +867,10 @@ class CFD_DLC_EXPORT DlcManager {
    * @param remote_input_amount the sum of the remote party's input value.
    * @param remote_collateral_amount the value of the remote party's
    * collateral.
-   * @param timeout the time after which the refund transaction can be used.
+   * @param refund_locktime the unix time or block number after which the
+   * refund transaction can be used.
+   * @param csv_delay the csv delay after which the penalty transaction can be
+   * used.
    * @param local_inputs the utxos to use for the local party.
    * @param remote_inputs the utxos to use for the remote party.
    * @param fee_rate the fee rate to compute the fees.
@@ -884,7 +887,8 @@ class CFD_DLC_EXPORT DlcManager {
       const Address& local_final_address, const Address& remote_final_address,
       const Amount& local_input_amount, const Amount& local_collateral_amount,
       const Amount& remote_input_amount, const Amount& remote_collateral_amount,
-      int64_t timeout, const std::vector<TxIn>& local_inputs,
+      uint64_t refund_locktime, uint64_t csv_delay,
+      const std::vector<TxIn>& local_inputs,
       const std::vector<TxIn>& remote_inputs, uint32_t fee_rate,
       uint32_t maturity_time);
 
@@ -898,7 +902,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @param oracle_r_points the R points for the particular event.
    * @param messages the set of messages for the outcome represented by the
    * CET.
-   * @param delay the time after which the remote party can claim the "to
+   * @param csv_delay the time after which the remote party can claim the "to
    * local" party's output.
    * @return Script
    */
@@ -906,7 +910,7 @@ class CFD_DLC_EXPORT DlcManager {
       const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
       const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
       const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string> messages, uint64_t delay);
+      const std::vector<std::string> messages, uint64_t csv_delay);
 
  private:
   /**

@@ -125,7 +125,8 @@ const ByteData CLOSING_HEX(
     "b570fbc70101014c632102e07cca3429680d949f968ea585d3e04f5b536fc46a0caf901083"
     "28fd663a86de670164b2752102e493dbf1c10d80f3581e4904930b1404cc6c13900ee07584"
     "74fa94abe8c4cd1368ac00000000");
-uint32_t DELAY = 100;
+uint32_t CSV_DELAY = 100;
+uint32_t REFUND_LOCKTIME = 100;
 
 const ByteData REFUND_HEX(
     "0200000000010164b0942d90b9b815f76548b207a2d8ee75fc250a233ab44c3e13e01cd4a5"
@@ -205,8 +206,9 @@ TEST(DlcManager, CetTest) {
   // Act
   auto cet = DlcManager::CreateCet(
       LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      REMOTE_FINAL_ADDRESS, ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, DELAY,
-      WIN_AMOUNT + closing_fee, LOSE_AMOUNT, MATURITY_TIME, 1, FUND_TX_ID, 0);
+      REMOTE_FINAL_ADDRESS, ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES,
+      CSV_DELAY, WIN_AMOUNT + closing_fee, LOSE_AMOUNT, MATURITY_TIME, 1,
+      FUND_TX_ID, 0);
   auto local_signature = DlcManager::GetRawCetSignature(
       cet, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
       FUND_OUTPUT, FUND_TX_ID, 0);
@@ -243,12 +245,12 @@ TEST(DlcManager, CetBadMaturityTest) {
 
   // Act/Assert
 
-  ASSERT_THROW(
-      DlcManager::CreateCet(
-          LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-          REMOTE_FINAL_ADDRESS, ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES,
-          DELAY, WIN_AMOUNT + closing_fee, LOSE_AMOUNT, 50, 1, FUND_TX_ID, 0),
-      CfdException);
+  ASSERT_THROW(DlcManager::CreateCet(
+                   LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
+                   REMOTE_FINAL_ADDRESS, ORACLE_PUBKEY, ORACLE_R_POINTS,
+                   WIN_MESSAGES, CSV_DELAY, WIN_AMOUNT + closing_fee,
+                   LOSE_AMOUNT, 50, 1, FUND_TX_ID, 0),
+               CfdException);
 }
 
 TEST(DlcManager, RefundTransactionTest) {
@@ -289,13 +291,13 @@ TEST(DlcManager, ClosingTransactionTest) {
 
   DlcManager::SignClosingTransactionInput(
       &closing_tx, LOCAL_FUND_PRIVKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, DELAY, {ORACLE_SIGNATURE},
-      input_amount, CET_ID, 0);
+      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY,
+      {ORACLE_SIGNATURE}, input_amount, CET_ID, 0);
 
   auto local_closing_signature = DlcManager::GetRawClosingTransactionSignature(
       closing_tx, LOCAL_FUND_PRIVKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, DELAY, {ORACLE_SIGNATURE},
-      input_amount, CET_ID, 0);
+      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY,
+      {ORACLE_SIGNATURE}, input_amount, CET_ID, 0);
   auto oracle_message_key =
       DlcUtil::GetCommittedKey(ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES);
   bool is_signature_valid = closing_tx.VerifyInputSignature(
@@ -303,9 +305,9 @@ TEST(DlcManager, ClosingTransactionTest) {
       DlcUtil::GetCombinedKey(ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES,
                               LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY),
       CET_ID, 0,
-      DlcManager::CreateCetRedeemScript(LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY,
-                                        REMOTE_SWEEP_PUBKEY, ORACLE_PUBKEY,
-                                        ORACLE_R_POINTS, WIN_MESSAGES, DELAY),
+      DlcManager::CreateCetRedeemScript(
+          LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
+          ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY),
       SigHashType(), input_amount, WitnessVersion::kVersion0);
   // Assert
   ASSERT_EQ(output_amount, closing_tx.GetTransaction().GetTxOut(0).GetValue());
@@ -325,18 +327,18 @@ TEST(DlcManager, PenaltyTransactionTest) {
       REMOTE_FINAL_ADDRESS, output_amount, CET_ID, 0);
   DlcManager::SignPenaltyTransactionInput(
       &penalty_tx, REMOTE_SWEEP_PRIVKEY, LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, DELAY, input_amount, CET_ID,
-      0);
+      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY, input_amount,
+      CET_ID, 0);
 
   auto remote_penalty_signature = DlcManager::GetRawPenaltyTransactionSignature(
       penalty_tx, REMOTE_SWEEP_PRIVKEY, LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, DELAY, input_amount, CET_ID,
-      0);
+      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY, input_amount,
+      CET_ID, 0);
   bool is_signature_valid = penalty_tx.VerifyInputSignature(
       remote_penalty_signature, REMOTE_SWEEP_PUBKEY, CET_ID, 0,
-      DlcManager::CreateCetRedeemScript(LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY,
-                                        REMOTE_SWEEP_PUBKEY, ORACLE_PUBKEY,
-                                        ORACLE_R_POINTS, WIN_MESSAGES, DELAY),
+      DlcManager::CreateCetRedeemScript(
+          LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
+          ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY),
       SigHashType(), input_amount, WitnessVersion::kVersion0);
 
   // Assert
@@ -383,8 +385,8 @@ TEST(DlcManager, CreateDlcTransactions) {
       REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
       LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
       REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
-      REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, DELAY, LOCAL_INPUTS,
-      REMOTE_INPUTS, 1, MATURITY_TIME);
+      REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, CSV_DELAY, REFUND_LOCKTIME,
+      LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME);
   auto fund_tx = dlc_transactions.fund_transaction;
   DlcManager::SignFundTransactionInput(&fund_tx, LOCAL_INPUT_PRIVKEY,
                                        LOCAL_INPUTS[0].GetTxid(), 0,
@@ -506,22 +508,24 @@ TEST(DlcManager, CreateCetTransactionNotEnoughInputTest) {
                                       {LOSE_MESSAGES, LOSE_AMOUNT, WIN_AMOUNT}};
 
   // Act/Assert
-  ASSERT_THROW(DlcManager::CreateDlcTransactions(
-                   outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
-                   REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-                   LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS,
-                   LOCAL_FINAL_ADDRESS, REMOTE_FINAL_ADDRESS,
-                   Amount::CreateBySatoshiAmount(1000), LOCAL_COLLATERAL_AMOUNT,
-                   REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, DELAY,
-                   LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME),
-               CfdException);
+  ASSERT_THROW(
+      DlcManager::CreateDlcTransactions(
+          outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
+          REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
+          LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
+          REMOTE_FINAL_ADDRESS, Amount::CreateBySatoshiAmount(1000),
+          LOCAL_COLLATERAL_AMOUNT, REMOTE_INPUT_AMOUNT,
+          REMOTE_COLLATERAL_AMOUNT, REFUND_LOCKTIME, CSV_DELAY, LOCAL_INPUTS,
+          REMOTE_INPUTS, 1, MATURITY_TIME),
+      CfdException);
   ASSERT_THROW(
       DlcManager::CreateDlcTransactions(
           outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
           REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
           LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
           REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
-          Amount::CreateBySatoshiAmount(1000), REMOTE_COLLATERAL_AMOUNT, DELAY,
-          LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME),
+          Amount::CreateBySatoshiAmount(1000), REMOTE_COLLATERAL_AMOUNT,
+          REFUND_LOCKTIME, CSV_DELAY, LOCAL_INPUTS, REMOTE_INPUTS, 1,
+          MATURITY_TIME),
       CfdException);
 }
