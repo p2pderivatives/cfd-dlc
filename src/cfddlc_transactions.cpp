@@ -83,13 +83,13 @@ TransactionController DlcManager::CreateCet(
     const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
     const Pubkey& remote_sweep_pubkey, const Address& remote_final_address,
     const Pubkey& oracle_pubkey, const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint64_t delay,
+    const std::vector<std::string>& messages, uint64_t csv_delay,
     const Amount& local_payout, const Amount& remote_payout,
     uint32_t maturity_time, uint32_t fee_rate, const Txid& fund_tx_id,
     uint32_t fund_vout) {
   auto cet_script = CreateCetRedeemScript(local_fund_pubkey, local_sweep_pubkey,
                                           remote_sweep_pubkey, oracle_pubkey,
-                                          oracle_r_points, messages, delay);
+                                          oracle_r_points, messages, csv_delay);
   return CreateCet(cet_script, remote_final_address, local_payout,
                    remote_payout, maturity_time, fee_rate, fund_tx_id,
                    fund_vout);
@@ -317,12 +317,12 @@ void DlcManager::SignClosingTransactionInput(
     const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
     const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
     const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint32_t delay,
+    const std::vector<std::string>& messages, uint32_t csv_delay,
     const std::vector<ByteData>& oracle_sigs, const Amount& value,
     const Txid& cet_tx_id, uint32_t cet_vout) {
   auto cet_script = CreateCetRedeemScript(
       local_fund_privkey.GeneratePubkey(), local_sweep_pubkey,
-      remote_sweep_pubkey, oracle_pubkey, oracle_r_points, messages, delay);
+      remote_sweep_pubkey, oracle_pubkey, oracle_r_points, messages, csv_delay);
   return SignClosingTransactionInput(closing_transaction, local_fund_privkey,
                                      local_sweep_pubkey, oracle_sigs,
                                      cet_script, value, cet_tx_id, cet_vout);
@@ -348,12 +348,12 @@ ByteData DlcManager::GetRawClosingTransactionSignature(
     const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
     const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
     const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint32_t delay,
+    const std::vector<std::string>& messages, uint32_t csv_delay,
     const std::vector<ByteData>& oracle_sigs, const Amount& value,
     const Txid& cet_tx_id, uint32_t cet_vout) {
   auto cet_script = CreateCetRedeemScript(
       local_fund_privkey.GeneratePubkey(), local_sweep_pubkey,
-      remote_sweep_pubkey, oracle_pubkey, oracle_r_points, messages, delay);
+      remote_sweep_pubkey, oracle_pubkey, oracle_r_points, messages, csv_delay);
   return GetRawClosingTransactionSignature(
       closing_transaction, local_fund_privkey, local_sweep_pubkey, oracle_sigs,
       cet_script, value, cet_tx_id, cet_vout);
@@ -661,8 +661,8 @@ DlcTransactions DlcManager::CreateDlcTransactions(
     const Address& remote_change_address, const Address& local_final_address,
     const Address& remote_final_address, const Amount& local_input_amount,
     const Amount& local_collateral_amount, const Amount& remote_input_amount,
-    const Amount& remote_collateral_amount, int64_t timeout,
-    const std::vector<TxIn>& local_inputs,
+    const Amount& remote_collateral_amount, uint64_t refund_locktime,
+    uint64_t csv_delay, const std::vector<TxIn>& local_inputs,
     const std::vector<TxIn>& remote_inputs, uint32_t fee_rate,
     uint32_t maturity_time) {
   auto fund_tx = CreateFundTransaction(
@@ -683,14 +683,15 @@ DlcTransactions DlcManager::CreateDlcTransactions(
     auto local_cet = CreateCet(
         local_fund_pubkey, local_sweep_pubkey, remote_sweep_pubkey,
         remote_final_address, oracle_pubkey, oracle_r_points,
-        outcomes[i].messages, timeout, outcomes[i].local_payout + closing_fee,
+        outcomes[i].messages, csv_delay, outcomes[i].local_payout + closing_fee,
         outcomes[i].remote_payout, maturity_time, fee_rate, fund_tx_id, 0);
     local_cets.push_back(local_cet);
     auto remote_cet = CreateCet(
         remote_fund_pubkey, remote_sweep_pubkey, local_sweep_pubkey,
         local_final_address, oracle_pubkey, oracle_r_points,
-        outcomes[i].messages, timeout, outcomes[i].remote_payout + closing_fee,
-        outcomes[i].local_payout, maturity_time, fee_rate, fund_tx_id, 0);
+        outcomes[i].messages, csv_delay,
+        outcomes[i].remote_payout + closing_fee, outcomes[i].local_payout,
+        maturity_time, fee_rate, fund_tx_id, 0);
     remote_cets.push_back(remote_cet);
   }
 
@@ -699,10 +700,11 @@ DlcTransactions DlcManager::CreateDlcTransactions(
         APPROXIMATE_REFUND_VBYTES) *
        fee_rate) /
       2;
-  auto refund_tx = CreateRefundTransaction(
-      local_final_address, remote_final_address,
-      local_collateral_amount + fee_back_per_party,
-      remote_collateral_amount + fee_back_per_party, timeout, fund_tx_id, 0);
+  auto refund_tx =
+      CreateRefundTransaction(local_final_address, remote_final_address,
+                              local_collateral_amount + fee_back_per_party,
+                              remote_collateral_amount + fee_back_per_party,
+                              refund_locktime, fund_tx_id, 0);
   return {fund_tx, local_cets, remote_cets, refund_tx};
 }
 
@@ -710,7 +712,7 @@ Script DlcManager::CreateCetRedeemScript(
     const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
     const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
     const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string> messages, uint64_t delay) {
+    const std::vector<std::string> messages, uint64_t csv_delay) {
   auto combine_pubkey =
       DlcUtil::GetCombinedKey(oracle_pubkey, oracle_r_points, messages,
                               local_fund_pubkey, local_sweep_pubkey);
@@ -719,7 +721,7 @@ Script DlcManager::CreateCetRedeemScript(
   builder.AppendOperator(ScriptOperator::OP_IF);
   builder.AppendData(combine_pubkey);
   builder.AppendOperator(ScriptOperator::OP_ELSE);
-  builder.AppendData(delay);
+  builder.AppendData(csv_delay);
   builder.AppendOperator(ScriptOperator::OP_CHECKSEQUENCEVERIFY);
   builder.AppendOperator(ScriptOperator::OP_DROP);
   builder.AppendData(remote_sweep_pubkey);
