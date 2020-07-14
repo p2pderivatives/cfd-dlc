@@ -100,6 +100,14 @@ const ByteData FUND_TX_HEX(
     "e42fceb5ae393c022022817d033c9db19c5bdcadd49b7587a810b6fc2264158a59665aba8a"
     "b298455b012103fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a146029"
     "755600000000");
+const ByteData FUND_TX_WITH_PREMIUM_HEX(
+    "02000000024f601442e48eec22ff3a907c5f5290c6a0d3d08fb869e46ebfbaa9226b6d2683"
+    "0000000000ffffffff98bbd477219a151a1daf5377b30e8c5f9fb574783943f33ac523ef07"
+    "2fa292bc0000000000ffffffff0438c3eb0b000000002200209b984c7bae3efddc3a3f0a20"
+    "ff81bfe89ed1fe07ff13e562149ee654bed845db37890e2401000000160014fa3629f3060b"
+    "6c1a5a365c30bf66fa00f155cb9ed70f10240100000016001465d4d622585baf5151de860b"
+    "1e7af58710f20da2a0860100000000001600143104041af39ddcb0976f9ab6522001f096af"
+    "e2ce00000000");
 const Txid FUND_TX_ID(
     "f4f1a5d41ce0133e4cb43a230a25fc75eed8a207b24865f715b8b9902d94b064");
 
@@ -139,6 +147,9 @@ const ByteData REFUND_HEX(
     "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6"
     "047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee552ae6400000"
     "0");
+
+const Address PREMIUM_DEST("bcrt1qxyzqgxhnnhwtp9m0n2m9ygqp7zt2lckwvxx4jq");
+const Amount OPTION_PREMIUM = Amount::CreateBySatoshiAmount(100000);
 
 TEST(DlcManager, FundTransactionTest) {
   // Arrange
@@ -528,4 +539,50 @@ TEST(DlcManager, CreateCetTransactionNotEnoughInputTest) {
           REFUND_LOCKTIME, CSV_DELAY, LOCAL_INPUTS, REMOTE_INPUTS, 1,
           MATURITY_TIME),
       CfdException);
+}
+
+TEST(DlcManager, FundTransactionWithPremiumTest) {
+  // Arrange
+  auto local_change = Amount::CreateBySatoshiAmount(4899899703);
+  auto remote_change = Amount::CreateBySatoshiAmount(4899999703);
+  TxOut local_change_output = TxOut(local_change, LOCAL_CHANGE_ADDRESS);
+  TxOut remote_change_output = TxOut(remote_change, REMOTE_CHANGE_ADDRESS);
+
+  // Act
+  auto fund_tx = DlcManager::CreateFundTransaction(
+      LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
+      local_change_output, REMOTE_INPUTS, remote_change_output, 1, PREMIUM_DEST,
+      OPTION_PREMIUM);
+
+  EXPECT_EQ(FUND_TX_WITH_PREMIUM_HEX.GetHex(), fund_tx.GetHex());
+  EXPECT_EQ(FUND_OUTPUT, fund_tx.GetTransaction().GetTxOut(0).GetValue());
+  EXPECT_EQ(local_change, fund_tx.GetTransaction().GetTxOut(1).GetValue());
+  EXPECT_EQ(remote_change, fund_tx.GetTransaction().GetTxOut(2).GetValue());
+  EXPECT_EQ(OPTION_PREMIUM,
+            fund_tx.GetTransaction().GetTxOut(3).GetValue().GetSatoshiValue());
+}
+
+TEST(DlcManager, CreateDlcTransactionsWithPremium) {
+  // Arrange
+  std::vector<DlcOutcome> outcomes = {{WIN_MESSAGES, WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_MESSAGES, LOSE_AMOUNT, WIN_AMOUNT}};
+
+  // Act
+  auto dlc_transactions = DlcManager::CreateDlcTransactions(
+      outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
+      REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
+      LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
+      REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
+      REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, CSV_DELAY, REFUND_LOCKTIME,
+      LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME, PREMIUM_DEST,
+      OPTION_PREMIUM);
+  auto fund_tx = dlc_transactions.fund_transaction;
+
+  EXPECT_EQ(FUND_TX_WITH_PREMIUM_HEX.GetHex(), fund_tx.GetHex());
+  EXPECT_EQ(4, fund_tx.GetTransaction().GetTxOutCount());
+  EXPECT_GT((LOCAL_INPUT_AMOUNT - LOCAL_COLLATERAL_AMOUNT - OPTION_PREMIUM)
+                .GetSatoshiValue(),
+            fund_tx.GetTransaction().GetTxOut(1).GetValue().GetSatoshiValue());
+  EXPECT_EQ(OPTION_PREMIUM.GetSatoshiValue(),
+            fund_tx.GetTransaction().GetTxOut(3).GetValue().GetSatoshiValue());
 }
