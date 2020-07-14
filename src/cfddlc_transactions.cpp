@@ -105,7 +105,8 @@ TransactionController DlcManager::CreateFundTransaction(
     const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
     const Amount& output_amount, const std::vector<TxIn>& local_inputs,
     const TxOut& local_change_output, const std::vector<TxIn>& remote_inputs,
-    const TxOut& remote_change_output, const uint32_t fee_rate) {
+    const TxOut& remote_change_output, const uint32_t fee_rate,
+    const Address& option_dest, const Amount& option_premium) {
   auto transaction = TransactionController(TX_VERSION, 0);
   auto multi_sig_script =
       CreateFundTxLockingScript(local_fund_pubkey, remote_fund_pubkey);
@@ -131,6 +132,14 @@ TransactionController DlcManager::CreateFundTransaction(
                          remote_change_output.GetValue());
   }
 
+  if (option_premium > 0) {
+    TxOut option_out(option_premium, option_dest);
+    if (!IsDustOutput(option_out, fee_rate)) {
+      transaction.AddTxOut(option_out.GetLockingScript(),
+                           option_out.GetValue());
+    }
+  }
+
   return transaction;
 }
 
@@ -140,7 +149,8 @@ TransactionController DlcManager::CreateFundTransaction(
     const Amount& remote_input_amount, const Amount& remote_collateral_amount,
     const std::vector<TxIn>& local_inputs, const Address& local_change_address,
     const std::vector<TxIn>& remote_inputs,
-    const Address& remote_change_address, uint32_t fee_rate) {
+    const Address& remote_change_address, uint32_t fee_rate,
+    const Address& option_dest, const Amount& option_premium) {
   auto total_fee =
       (APPROXIMATE_CET_VBYTES + APPROXIMATE_CLOSING_VBYTES) * fee_rate;
   auto total_fee_amount = Amount::CreateBySatoshiAmount(total_fee);
@@ -170,7 +180,8 @@ TransactionController DlcManager::CreateFundTransaction(
 
   auto fund_tx = CreateFundTransaction(
       local_fund_pubkey, remote_fund_pubkey, fund_output_amount, local_inputs,
-      local_change_output, remote_inputs, remote_change_output, fee_rate);
+      local_change_output, remote_inputs, remote_change_output, fee_rate,
+      option_dest, option_premium);
   uint32_t common_size = fund_tx.GetSizeIgnoreTxIn();
   uint32_t local_input_size = GetTotalInputVSize(local_inputs);
   uint32_t remote_input_size = GetTotalInputVSize(remote_inputs);
@@ -198,7 +209,8 @@ TransactionController DlcManager::CreateFundTransaction(
 
   return CreateFundTransaction(
       local_fund_pubkey, remote_fund_pubkey, fund_output_amount, local_inputs,
-      local_change_output, remote_inputs, remote_change_output, fee_rate);
+      local_change_output, remote_inputs, remote_change_output, fee_rate,
+      option_dest, option_premium);
 }
 
 TransactionController DlcManager::CreateRefundTransaction(
@@ -664,12 +676,13 @@ DlcTransactions DlcManager::CreateDlcTransactions(
     const Amount& remote_collateral_amount, uint64_t refund_locktime,
     uint64_t csv_delay, const std::vector<TxIn>& local_inputs,
     const std::vector<TxIn>& remote_inputs, uint32_t fee_rate,
-    uint32_t maturity_time) {
+    uint32_t maturity_time, const Address& option_dest,
+    const Amount& option_premium) {
   auto fund_tx = CreateFundTransaction(
       local_fund_pubkey, remote_fund_pubkey, local_input_amount,
       local_collateral_amount, remote_input_amount, remote_collateral_amount,
       local_inputs, local_change_address, remote_inputs, remote_change_address,
-      fee_rate);
+      fee_rate, option_dest, option_premium);
   auto nb_outcomes = outcomes.size();
 
   std::vector<TransactionController> local_cets;
@@ -753,7 +766,6 @@ bool DlcManager::IsDustOutput(const TxOut& output, uint32_t fee_rate,
                               uint32_t extra_size) {
   TxOutReference txout_ref(output);
   size_t nSize = txout_ref.GetSerializeSize();
-  int witnessversion = 0;
   std::vector<unsigned char> witnessprogram;
 
   if (txout_ref.GetLockingScript().IsWitnessProgram()) {

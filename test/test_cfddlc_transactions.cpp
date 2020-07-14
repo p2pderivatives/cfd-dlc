@@ -140,6 +140,9 @@ const ByteData REFUND_HEX(
     "047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee552ae6400000"
     "0");
 
+const Address PREMIUM_DEST("bcrt1qxyzqgxhnnhwtp9m0n2m9ygqp7zt2lckwvxx4jq");
+const Amount OPTION_PREMIUM = Amount::CreateBySatoshiAmount(100000);
+
 TEST(DlcManager, FundTransactionTest) {
   // Arrange
   auto change = Amount::CreateBySatoshiAmount(4899999719);
@@ -528,4 +531,44 @@ TEST(DlcManager, CreateCetTransactionNotEnoughInputTest) {
           REFUND_LOCKTIME, CSV_DELAY, LOCAL_INPUTS, REMOTE_INPUTS, 1,
           MATURITY_TIME),
       CfdException);
+}
+
+TEST(DlcManager, FundTransactionWithPremiumTest) {
+  // Arrange
+  auto change = Amount::CreateBySatoshiAmount(4899999719);
+  TxOut local_change_output = TxOut(change, LOCAL_CHANGE_ADDRESS);
+  TxOut remote_change_output = TxOut(change, REMOTE_CHANGE_ADDRESS);
+
+  // Act
+  auto fund_tx = DlcManager::CreateFundTransaction(
+      LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
+      local_change_output, REMOTE_INPUTS, remote_change_output, 1, PREMIUM_DEST,
+      OPTION_PREMIUM);
+
+  EXPECT_EQ(FUND_OUTPUT, fund_tx.GetTransaction().GetTxOut(0).GetValue());
+  EXPECT_EQ(change, fund_tx.GetTransaction().GetTxOut(1).GetValue());
+  EXPECT_EQ(change, fund_tx.GetTransaction().GetTxOut(2).GetValue());
+  EXPECT_EQ(OPTION_PREMIUM,
+            fund_tx.GetTransaction().GetTxOut(3).GetValue().GetSatoshiValue());
+}
+
+TEST(DlcManager, CreateDlcTransactionsWithPremium) {
+  // Arrange
+  std::vector<DlcOutcome> outcomes = {{WIN_MESSAGES, WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_MESSAGES, LOSE_AMOUNT, WIN_AMOUNT}};
+
+  // Act
+  auto dlc_transactions = DlcManager::CreateDlcTransactions(
+      outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
+      REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
+      LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
+      REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
+      REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, CSV_DELAY, REFUND_LOCKTIME,
+      LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME, PREMIUM_DEST,
+      OPTION_PREMIUM);
+  auto fund_tx = dlc_transactions.fund_transaction;
+
+  EXPECT_EQ(4, fund_tx.GetTransaction().GetTxOutCount());
+  EXPECT_EQ(OPTION_PREMIUM.GetSatoshiValue(),
+            fund_tx.GetTransaction().GetTxOut(3).GetValue().GetSatoshiValue());
 }
