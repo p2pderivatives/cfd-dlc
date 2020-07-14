@@ -154,13 +154,18 @@ class CFD_DLC_EXPORT DlcManager {
    * counter-party.
    * @param fee_rate the fee rate to use to determine is an output should be
    * considered dust.
+   * @param option_dest (optional) destination address for the payment of the
+   * option premium
+   * @param option_premium (optional) value for the option premium
    * @return TransactionController the created fund transaction.
    */
   static TransactionController CreateFundTransaction(
       const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
       const Amount& output_amount, const std::vector<TxIn>& local_inputs,
       const TxOut& local_change_output, const std::vector<TxIn>& remote_inputs,
-      const TxOut& remote_change_output, const uint32_t fee_rate);
+      const TxOut& remote_change_output, const uint32_t fee_rate,
+      const Address& option_dest = Address(),
+      const Amount& option_premium = Amount::CreateBySatoshiAmount(0));
 
   /**
    * @brief Create a Fund Tx Locking Script object
@@ -875,6 +880,9 @@ class CFD_DLC_EXPORT DlcManager {
    * @param remote_inputs the utxos to use for the remote party.
    * @param fee_rate the fee rate to compute the fees.
    * @param maturity_time the expiration date of the contract.
+   * @param option_dest (optional) destination address for the payment of the
+   * option premium
+   * @param option_premium (optional) value for the option premium
    * @return DlcTransactions a struct containing the necessary transaction
    * to establish a DLC.
    */
@@ -890,7 +898,8 @@ class CFD_DLC_EXPORT DlcManager {
       uint64_t refund_locktime, uint64_t csv_delay,
       const std::vector<TxIn>& local_inputs,
       const std::vector<TxIn>& remote_inputs, uint32_t fee_rate,
-      uint32_t maturity_time);
+      uint32_t maturity_time, const Address& option_dest = Address(),
+      const Amount& option_premium = Amount::CreateBySatoshiAmount(0));
 
   /**
    * @brief Create a Cet Redeem Script object
@@ -929,6 +938,9 @@ class CFD_DLC_EXPORT DlcManager {
    * @param remote_inputs the inputs for the remote party.
    * @param remote_change_address the change address for the remote party.
    * @param fee_rate the fee rate.
+   * @param option_dest (optional) destination address for the payment of the
+   * option premium
+   * @param option_premium (optional) value for the option premium
    * @return TransactionController the created transaction.
    */
   static TransactionController CreateFundTransaction(
@@ -938,7 +950,9 @@ class CFD_DLC_EXPORT DlcManager {
       const std::vector<TxIn>& local_inputs,
       const Address& local_change_address,
       const std::vector<TxIn>& remote_inputs,
-      const Address& remote_change_address, uint32_t fee_rate);
+      const Address& remote_change_address, uint32_t fee_rate,
+      const Address& option_dest = Address(),
+      const Amount& option_premium = Amount::CreateBySatoshiAmount(0));
 
   /**
    * @brief Get the total VSize for the given inputs.
