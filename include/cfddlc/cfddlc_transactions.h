@@ -4,11 +4,14 @@
 #define CFD_DLC_INCLUDE_CFDDLC_CFDDLC_TRANSACTIONS_H_
 
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "cfd/cfd_transaction.h"
 #include "cfdcore/cfdcore_address.h"
+#include "cfdcore/cfdcore_ecdsa_adaptor.h"
 #include "cfdcore/cfdcore_hdwallet.h"
+#include "cfdcore/cfdcore_schnorrsig.h"
 #include "cfddlc/cfddlc_common.h"
 
 namespace cfd {
@@ -20,6 +23,9 @@ using cfd::TransactionController;
 using cfd::Txid;
 using cfd::TxIn;
 using cfd::TxOut;
+using cfd::core::AdaptorPair;
+using cfd::core::AdaptorProof;
+using cfd::core::AdaptorSignature;
 using cfd::core::Address;
 using cfd::core::ByteData;
 using cfd::core::ByteData256;
@@ -28,6 +34,8 @@ using cfd::core::ExtPubkey;
 using cfd::core::NetType;
 using cfd::core::Privkey;
 using cfd::core::Pubkey;
+using cfd::core::SchnorrPubkey;
+using cfd::core::SchnorrSignature;
 
 /**
  * @brief A structure holding the set of transactions that make up a DLC.
@@ -40,15 +48,10 @@ struct CFD_DLC_EXPORT DlcTransactions {
    */
   TransactionController fund_transaction;
   /**
-   * @brief The set of CETs for the local party.
+   * @brief The set of CETs
    *
    */
-  std::vector<TransactionController> local_cets;
-  /**
-   * @brief The set of CETs for the remote party.
-   *
-   */
-  std::vector<TransactionController> remote_cets;
+  std::vector<TransactionController> cets;
   /**
    * @brief The refund transaction.
    *
@@ -62,11 +65,6 @@ struct CFD_DLC_EXPORT DlcTransactions {
  */
 struct CFD_DLC_EXPORT DlcOutcome {
   /**
-   * @brief The set of messages representing the outcome.
-   *
-   */
-  std::vector<std::string> messages;
-  /**
    * @brief The payout for the local party.
    *
    */
@@ -79,6 +77,63 @@ struct CFD_DLC_EXPORT DlcOutcome {
 };
 
 /**
+ * @brief Contain a transaction input together with the maximum witness length
+ * for this input.
+ *
+ */
+struct TxInputInfo {
+  /**
+   * @brief The transaction input.
+   *
+   */
+  TxIn input;
+  /**
+   * @brief The maximum length of the witness stack.
+   *
+   */
+  uint32_t max_witness_length;
+};
+
+/**
+ * @brief Contains the parameters required for creating DLC transactions for a
+ * single party. Specifically these are the common fields between Offer and
+ * Accept messages.
+ *
+ */
+struct PartyParams {
+  /**
+   * @brief The public key for the fund multisig script
+   *
+   */
+  Pubkey fund_pubkey;
+  /**
+   * @brief The script pubkey for the change output.
+   *
+   */
+  Script change_script_pubkey;
+  /**
+   * @brief The script pubkey for the final output.
+   *
+   */
+  Script final_script_pubkey;
+  /**
+   * @brief A list of inputs to fund the contract
+   *
+   */
+  std::vector<TxInputInfo> inputs_info;
+  /**
+   * @brief The total value of the provided inputs
+   *
+   */
+  Amount input_amount;
+  /**
+   * @brief The collateral put in the contract by the party
+   *
+   */
+  Amount collateral;
+};
+
+/**
  * @brief Class providing utility functions to create DLC transactions.
  *
  */
@@ -87,57 +142,34 @@ class CFD_DLC_EXPORT DlcManager {
   /**
    * @brief Create a Cet object
    *
-   * @param local_fund_pubkey the local party's public key used in the multisig
-   * output of the fund transaction.
-   * @param local_sweep_pubkey the local party's sweep public key.
-   * @param remote_sweep_pubkey the remote party's sweep public key.
-   * @param remote_final_address the address of the counter party for
-   * receiving their payout.
-   * @param oracle_pubkey the public key of the oracle.
-   * @param oracle_r_points the r points with which the oracle will sign the
-   * outcome message.
-   * @param messages the messages that this CET is for.
-   * @param csv_delay the number of blocks after which the penalty transaction
-   * can be used.
-   * @param local_payout the payout to the local party.
-   * @param remote_payout the payout the the remote party.
-   * @param maturity_time the maturity time of the contract before which the
-   * created CET cannot be broadcast.
-   * @param fee_rate the fee rate to use to determine if an output will be
-   * considered as dust.
-   * @param fund_tx_id the ID of the fund transaction.
-   * @param fund_vout the vout of the fund transaction output.
-   * @return TransactionController the created CET.
+   * @param local_output the output paying the local party
+   * @param remote_output the output paying the remote party
+   * @param fund_tx_id the tx id of the funding transaction
+   * @param fund_vout the vout of the fund output
+   * @param lock_time lock time (optional)
+   * @return TransactionController created CET
    */
-  static TransactionController CreateCet(
-      const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
-      const Pubkey& remote_sweep_pubkey, const Address& remote_final_address,
-      const Pubkey& oracle_pubkey, const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint64_t csv_delay,
-      const Amount& local_payout, const Amount& remote_payout,
-      uint32_t maturity_time, uint32_t fee_rate, const Txid& fund_tx_id,
-      uint32_t fund_vout = 0);
-
+  static TransactionController CreateCet(const TxOut& local_output,
+                                         const TxOut& remote_output,
+                                         const Txid& fund_tx_id,
+                                         const uint32_t fund_vout,
+                                         uint32_t lock_time = 0);
   /**
-   * @brief Create a Cet object
+   * @brief Create a Cets object
    *
-   * @param cet_script the cet script.
-   * @param remote_final_address the address for the remote payout.
-   * @param local_payout the local payout.
-   * @param remote_payout the remote payout.
-   * @param maturity_time the maturity time of the contract before which the
-   * @param fee_rate the fee rate to use to determine if an output should be
-   * considered dust.
-   * @param fund_txid the ID of the fund transaction.
-   * @param fund_vout the output number within the fund transaction.
-   * created CET cannot be broadcast.
-   * @return TransactionController the created CET
+   * @param fund_tx_id the tx id of the funding transaction
+   * @param fund_vout the vout of the fund output
+   * @param local_final_script_pubkey the script for the local payout output.
+   * @param remote_final_script_pubkey the script for the remote payout output.
+   * @param outcomes the list of possible payouts, one for each possible outcome
+   * @param lock_time lock time (optional)
+   * @return TransactionController created CETs
    */
-  static TransactionController CreateCet(
-      const Script& cet_script, const Address& remote_final_address,
-      const Amount& local_payout, const Amount& remote_payout,
-      uint32_t maturity_time, uint32_t fee_rate, const Txid& fund_txid,
-      uint32_t fund_vout = 0);
+  static std::vector<TransactionController> CreateCets(
+      const Txid& fund_tx_id, const uint32_t fund_vout,
+      const Script& local_final_script_pubkey,
+      const Script& remote_final_script_pubkey,
+      const std::vector<DlcOutcome> outcomes, uint32_t lock_time = 0);
 
   /**
    * @brief Create a Fund Transaction
@@ -152,20 +184,21 @@ class CFD_DLC_EXPORT DlcManager {
    * counter-party.
    * @param remote_change_output the change output to the
    * counter-party.
-   * @param fee_rate the fee rate to use to determine is an output should be
-   * considered dust.
    * @param option_dest (optional) destination address for the payment of the
    * option premium
    * @param option_premium (optional) value for the option premium
+   * @param lock_time (optional) the lock time to use
+   * @note If option_premium is non zero, the premium_dest value is required, or
+   * an exception will be thrown.
    * @return TransactionController the created fund transaction.
    */
   static TransactionController CreateFundTransaction(
       const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
       const Amount& output_amount, const std::vector<TxIn>& local_inputs,
       const TxOut& local_change_output, const std::vector<TxIn>& remote_inputs,
-      const TxOut& remote_change_output, const uint32_t fee_rate,
-      const Address& option_dest = Address(),
-      const Amount& option_premium = Amount::CreateBySatoshiAmount(0));
+      const TxOut& remote_change_output, const Address& option_dest = Address(),
+      const Amount& option_premium = Amount::CreateBySatoshiAmount(0),
+      const uint64_t lock_time = 0);
 
   /**
    * @brief Create a Fund Tx Locking Script object
@@ -190,334 +223,9 @@ class CFD_DLC_EXPORT DlcManager {
    * @return TransactionController the refund transaction.
    */
   static TransactionController CreateRefundTransaction(
-      const Address& local_final_address, const Address& remote_final_address,
+      const Script& local_final_address, const Script& remote_final_address,
       const Amount& local_amount, const Amount& remote_amount,
       uint32_t lock_time, const Txid& fund_tx_id, uint32_t fund_vout = 0);
-
-  /**
-   * @brief Create a Mutual Closing Transaction
-   *
-   * @param local_final_address the address of the local party.
-   * @param remote_final_address the public key of the counter party.
-   * @param local_amount the amount to the local party.
-   * @param remote_amount the amount to the counter party.
-   * @param fee_rate the fee rate to use to determine is an output should be
-   * considered dust.
-   * @param fund_tx_id the id of the fund transaction.
-   * @param fund_vout the vout of the multisig output in the fund transaction.
-   * @return TransactionController the mutual closing transaction.
-   */
-  static TransactionController CreateMutualClosingTransaction(
-      const Address& local_final_address, const Address& remote_final_address,
-      const Amount& local_amount, const Amount& remote_amount,
-      uint32_t fee_rate, const Txid& fund_tx_id, uint32_t fund_vout = 0);
-
-  /**
-   * @brief Get the Raw Mutual Closing Tx Signature object
-   *
-   * @param mutual_closing_tx The transaction for which to get a signature.
-   * @param privkey The private key with which to sign.
-   * @param fund_lockscript The redeem multi sig script of the fund transaction.
-   * @param input_amount The output value of the fund output.
-   * @param fund_tx_id The ID of the fund transaction.
-   * @param fund_tx_vout The vout of the multisig output in the fund
-   * transaction.
-   * @return ByteData a raw signature.
-   */
-  static ByteData GetRawMutualClosingTxSignature(
-      const TransactionController& mutual_closing_tx, const Privkey& privkey,
-      const Script& fund_lockscript, const Amount& input_amount,
-      const Txid& fund_tx_id, const uint32_t fund_tx_vout = 0);
-
-  /**
-   * @brief Get the Raw Mutual Closing Tx Signature object
-   *
-   * @param mutual_closing_tx The transaction for which to get a signature.
-   * @param privkey The private key with which to sign.
-   * @param local_fund_pubkey The public key of the local party.
-   * @param remote_fund_pubkey The public key of the remote party.
-   * @param input_amount The output value of the fund output.
-   * @param fund_tx_id The ID of the fund transaction.
-   * @param fund_tx_vout The vout of the multisig output in the fund
-   * transaction.
-   * @return ByteData a raw signature.
-   */
-  static ByteData GetRawMutualClosingTxSignature(
-      const TransactionController& mutual_closing_tx, const Privkey& privkey,
-      const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-      const Amount& input_amount, const Txid& fund_tx_id,
-      const uint32_t fund_tx_vout = 0);
-
-  /**
-   * @brief Add the raw signatures to the mutual closing transaction.
-   *
-   * @param mutual_closing_tx The transaction
-   * @param fund_lockscript The redeem multi sig script of the fund transaction.
-   * @param signatures the signatures to add.
-   * @param fund_tx_id The ID of the fund transaction.
-   * @param fund_tx_vout The vout of the multisig output in the fund
-   * transaction.
-   */
-  static void AddSignaturesToMutualClosingTx(
-      TransactionController* mutual_closing_tx, const Script& fund_lockscript,
-      const std::vector<ByteData>& signatures, const Txid& fund_tx_id,
-      const uint32_t fund_tx_vout);
-
-  /**
-   * @brief Add the raw signatures to the mutual closing transaction.
-   *
-   * @param mutual_closing_tx The transaction
-   * @param local_fund_pubkey The public key of the local party.
-   * @param remote_fund_pubkey The public key of the remote party.
-   * @param signatures the signatures to add.
-   * @param fund_tx_id The ID of the fund transaction.
-   * @param fund_tx_vout The vout of the multisig output in the fund
-   * transaction.
-   */
-  static void AddSignaturesToMutualClosingTx(
-      TransactionController* mutual_closing_tx, const Pubkey& local_fund_pubkey,
-      const Pubkey& remote_fund_pubkey, const std::vector<ByteData>& signatures,
-      const Txid& fund_tx_id, const uint32_t fund_tx_vout);
-
-  /**
-   * @brief Verify the signature of a mutual closing transaction.
-   *
-   * @param mutual_closing_tx the mutual closing transaction.
-   * @param signature the signature to verify.
-   * @param local_fund_pubkey the public key of the local party.
-   * @param remote_fund_pubkey the public key of the remote party.
-   * @param fund_txid the id of the fund transaction.
-   * @param fund_vout the vout of the multisig output in the fund transaction.
-   * @param input_amount the value of the fund output.
-   * @param verify_remote whether the signature is from the remote party or not.
-   * @return true if the signature is valid.
-   * @return false if the signature is invalid.
-   */
-  static bool VerifyMutualClosingTxSignature(
-      const TransactionController& mutual_closing_tx, const ByteData& signature,
-      const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-      const Amount& input_amount, const Txid& fund_txid, uint32_t fund_vout = 0,
-      bool verify_remote = true);
-
-  /**
-   * @brief Verify the signature of a mutual closing transaction.
-   *
-   * @param mutual_closing_tx the mutual closing transaction.
-   * @param signature the signature to verify.
-   * @param pubkey the public key against which to verify the signature.
-   * @param lock_script the multisig lock script of the fund output.
-   * @param fund_txid the id of the fund transaction.
-   * @param fund_vout the vout of the multisig output in the fund transaction.
-   * @param input_amount the value of the fund output.
-   * @return true if the signature is valid.
-   * @return false if the signature is invalid.
-   */
-  static bool VerifyMutualClosingTxSignature(
-      const TransactionController& mutual_closing_tx, const ByteData& signature,
-      const Pubkey& pubkey, const Script& lock_script,
-      const Amount& input_amount, const Txid& fund_txid,
-      uint32_t fund_vout = 0);
-
-  /**
-   * @brief Create a Closing Transaction object
-   *
-   * @param address the destination address for the output.
-   * @param amount the output value.
-   * @param cet_id the id of the CET this closing transaction refers to.
-   * @param cet_vout the output index in the CET.
-   * @return TransactionController
-   */
-  static TransactionController CreateClosingTransaction(const Address& address,
-                                                        const Amount& amount,
-                                                        const Txid& cet_id,
-                                                        uint32_t cet_vout = 0);
-
-  /**
-   * @brief Sign a closing transaction input.
-   *
-   * @param closing_transaction the transaction to sign.
-   * @param local_fund_privkey the local party private key that was used in
-   * the fund transaction.
-   * @param local_sweep_pubkey the local party sweep public key.
-   * @param remote_sweep_pubkey the remote party sweep public key.
-   * @param oracle_public_key the oracle public key.
-   * @param oracle_r_points the oracle r points.
-   * @param messages the messages representing the contract outcome.
-   * @param csv_delay the delay after which the remote party can take over the
-   * funds.
-   * @param oracle_sigs the oracle signatures over the messages.
-   * @param value the value of the CET output.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the output index in the CET.
-   */
-  static void SignClosingTransactionInput(
-      TransactionController* closing_transaction,
-      const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-      const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_public_key,
-      const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t csv_delay,
-      const std::vector<ByteData>& oracle_sigs, const Amount& value,
-      const Txid& cet_tx_id, uint32_t cet_vout = 0);
-
-  /**
-   * @brief Sign a closing transaction input.
-   *
-   * @param closing_transaction the transaction to sign.
-   * @param local_fund_privkey the local party private key that was used in
-   * the fund transaction.
-   * @param local_sweep_pubkey the local party sweep public key.
-   * @param oracle_sigs the oracle signatures over the messages.
-   * @param cet_script the locking script of the CET output
-   * @param value the value of the CET output.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the output index in the CET.
-   */
-  static void SignClosingTransactionInput(
-      TransactionController* closing_transaction,
-      const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-      const std::vector<ByteData>& oracle_sigs, const Script& cet_script,
-      const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout = 0);
-
-  /**
-   * @brief Create a Penalty Transaction.
-   *
-   * @param address the destination address for the transaction output.
-   * @param amount the output amount.
-   * @param cet_id the id of the CET.
-   * @param cet_vout the output index in the CET.
-   * @return TransactionController representing the penalty transaction.
-   */
-  static TransactionController CreatePenaltyTransaction(const Address& address,
-                                                        const Amount& amount,
-                                                        const Txid& cet_id,
-                                                        uint32_t cet_vout = 0);
-
-  /**
-   * @brief Sign a penalty transaction input.
-   *
-   * @param penalty_transaction the transaction to sign.
-   * @param remote_sweep_privkey the private key used to sign.
-   * @param local_fund_pubkey the local party's public key.
-   * @param local_sweep_pubkey the local party's sweep key.
-   * @param oracle_public_key the oracle public key.
-   * @param oracle_r_points the oracle r points.
-   * @param messages the messages signed by the oracle.
-   * @param csv_delay the delay after which the remote party can claim the local
-   * party output.
-   * @param value the output value.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the output index in the CET.
-   */
-  static void SignPenaltyTransactionInput(
-      TransactionController* penalty_transaction,
-      const Privkey& remote_sweep_privkey, const Pubkey& local_fund_pubkey,
-      const Pubkey& local_sweep_pubkey, const Pubkey& oracle_public_key,
-      const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t csv_delay,
-      const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout = 0);
-
-  /**
-   * @brief
-   *
-   * @param penalty_transaction the transaction to sign.
-   * @param privkey the private key to sign with.
-   * @param cet_script the script of the CET.
-   * @param value the amount in the CET output.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the output index in the CET.
-   */
-  static void SignPenaltyTransactionInput(
-      TransactionController* penalty_transaction, const Privkey& privkey,
-      const Script& cet_script, const Amount& value, const Txid& cet_tx_id,
-      uint32_t cet_vout = 0);
-
-  /**
-   * @brief Get a raw signature (non DER encoded) for a closing transaction.
-   *
-   * @param closing_transaction the transaction to get the signature for.
-   * @param local_fund_privkey the private key to sign with.
-   * @param local_sweep_pubkey the local party sweep key.
-   * @param remote_sweep_pubkey the remote party sweep key.
-   * @param oracle_pubkey the public key of the oracle.
-   * @param oracle_r_points the oracle r points.
-   * @param messages the messages signed by the oracle.
-   * @param csv_delay the delay after which the remote party can claim the local
-   * party output.
-   * @param oracle_sigs the signatures from the oracle.
-   * @param value the value in the CET output.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the index of the CET output.
-   * @return ByteData the signature.
-   */
-  static ByteData GetRawClosingTransactionSignature(
-      const TransactionController& closing_transaction,
-      const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-      const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
-      const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t csv_delay,
-      const std::vector<ByteData>& oracle_sigs, const Amount& value,
-      const Txid& cet_tx_id, uint32_t cet_vout = 0);
-
-  /**
-   * @brief Get the Raw Closing Transaction Signature object
-   *
-   * @param closing_transaction
-   * @param local_fund_privkey the private key to sign with.
-   * @param local_sweep_pubkey the local party sweep key.
-   * @param oracle_sigs the signatures from the oracle.
-   * @param cet_script the CET script.
-   * @param value the value in the CET output.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the index of the CET output.
-   * @return ByteData the signature.
-   */
-  static ByteData GetRawClosingTransactionSignature(
-      const TransactionController& closing_transaction,
-      const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-      const std::vector<ByteData>& oracle_sigs, const Script& cet_script,
-      const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout = 0);
-
-  /**
-   * @brief Get the Raw Penalty Transaction Signature object
-   *
-   * @param penalty_transaction the transaction to get a signature for.
-   * @param remote_sweep_privkey the private key to sign with.
-   * @param local_fund_pubkey the local party pubkey used for the multisig
-   * script in the fund transaction.
-   * @param local_sweep_pubkey the local party sweep key.
-   * @param oracle_pubkey the public key of the oracle.
-   * @param oracle_r_points the oracle r points.
-   * @param messages the messages signed by the oracle.
-   * @param csv_delay the delay after which the remote party can claim the local
-   * party output.
-   * @param value the value in the CET output.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the index of the CET output.
-   * @return ByteData
-   */
-  static ByteData GetRawPenaltyTransactionSignature(
-      const TransactionController& penalty_transaction,
-      const Privkey& remote_sweep_privkey, const Pubkey& local_fund_pubkey,
-      const Pubkey& local_sweep_pubkey, const Pubkey& oracle_pubkey,
-      const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string>& messages, uint32_t csv_delay,
-      const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout = 0);
-
-  /**
-   * @brief Get a raw signature for a penalty transaction.
-   *
-   * @param penalty_transaction the transaction to get the signature for.
-   * @param privkey the private key to sign with.
-   * @param cet_script the CET script.
-   * @param value the CET output value.
-   * @param cet_tx_id the id of the CET.
-   * @param cet_vout the index of the CET output.
-   * @return ByteData the signature.
-   */
-  static ByteData GetRawPenaltyTransactionSignature(
-      const TransactionController& penalty_transaction, const Privkey& privkey,
-      const Script& cet_script, const Amount& value, const Txid& cet_tx_id,
-      uint32_t cet_vout = 0);
 
   /**
    * @brief Sign a funding transaction input.
@@ -548,6 +256,46 @@ class CFD_DLC_EXPORT DlcManager {
       const Pubkey& pubkey, const Txid& prev_tx_id, uint32_t prev_tx_vout);
 
   /**
+   * @brief Create an Adaptor Signature for a given cet using the provided
+   * private key.
+   *
+   * @param cet the CET to generate the signature for.
+   * @param oracle_pubkey the pubkey of the oracle for the associated event.
+   * @param oracle_r_value the r value that the oracle will use for the
+   * associated event.
+   * @param funding_sk the private key to generate the signature with.
+   * @param funding_script_pubkey the script pubkey of the fund output.
+   * @param fund_output_amount the value of the fund output.
+   * @param msg the message for the outcome corresponding to the given CET.
+   * @return AdaptorPair an adaptor signature and its dleq proof.
+   */
+  static AdaptorPair CreateCetAdaptorSignature(
+      const TransactionController& cet, const SchnorrPubkey& oracle_pubkey,
+      const SchnorrPubkey& oracle_r_value, const Privkey& funding_sk,
+      const Script& funding_script_pubkey, const Amount& fund_output_amount,
+      const ByteData256& msg);
+
+  /**
+   * @brief Create a Cet Adaptor Signatures object
+   *
+   * @param cets the cets to generate adaptor signatures for.
+   * @param oracle_pubkey the pubkey of the oracle for the associated event.
+   * @param oracle_r_value the r value that the oracle will use for the
+   * associated event.
+   * @param funding_sk the private key to generate the signature with.
+   * @param funding_script_pubkey the script pubkey of the fund output.
+   * @param fund_output_amount the value of the fund output.
+   * @param msgs the messages for the outcomes corresponding to the given CETs.
+   * @return std::vector<AdaptorPair> a set of signature together with their
+   * DLEq proofs.
+   */
+  static std::vector<AdaptorPair> CreateCetAdaptorSignatures(
+      const std::vector<TransactionController>& cets,
+      const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+      const Privkey& funding_sk, const Script& funding_script_pubkey,
+      const Amount& fund_output_amount, const std::vector<ByteData256>& msgs);
+
+  /**
    * @brief Verify that a signature for a fund transaction is valid.
    *
    * @param fund_tx the transaction for which the signature was made.
@@ -568,67 +316,71 @@ class CFD_DLC_EXPORT DlcManager {
   /**
    * @brief
    *
+   * @param adaptor_pair the adaptor signature and its DLEq proof to verify.
    * @param cet the transaction to verify the signature against.
-   * @param signature the signature to verify.
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param remote_fund_pubkey the fund public key of the remote party.
-   * @param input_amount the input amount.
-   * @param fund_txid the id of the fund transaction
-   * @param fund_vout the vout of the fund output.
-   * @param verify_remote whether to verify the signature for the remote party
-   * (if true) of the local party (if false).
+   * @param pubkey the public key to verify the signature against.
+   * @param oracle_pubkey the public key of the oracle used for the associated
+   * event.
+   * @param oracle_r_value the r_value that the oracle will used to create a
+   * signature over the outcome of the associated event.
+   * @param funding_script_pubkey the script pubkey of the fund output.
+   * @param fund_output_amount the value of the fund output.
+   * @param msg the hash of the event outcome for the given CET.
    * @return true
    * @return false
    */
-  static bool VerifyCetSignature(const TransactionController& cet,
-                                 const ByteData& signature,
-                                 const Pubkey& local_fund_pubkey,
-                                 const Pubkey& remote_fund_pubkey,
-                                 const Amount& input_amount,
-                                 const Txid& fund_txid, uint32_t fund_vout = 0,
-                                 bool verify_remote = true);
+  static bool VerifyCetAdaptorSignature(
+      const AdaptorPair& adaptor_pair, const TransactionController& cet,
+      const Pubkey& pubkey, const SchnorrPubkey& oracle_pubkey,
+      const SchnorrPubkey& oracle_r_value, const Script& funding_script_pubkey,
+      const Amount& fund_output_amount, const ByteData256& msg);
+
+  /**
+   * @brief Sign a CET transaction using a counter party adaptor signature that
+   * will be decrypted using the provided oracle signature, and own signature
+   * generated using the provided private key.
+   *
+   * @param cet the CET to which the signatures will be added.
+   * @param adaptor_sig the adaptor signature of the counterparty.
+   * @param oracle_signature the signature of the oracle over the corresponding
+   * event outcome.
+   * @param funding_sk the private key to generate own signature with.
+   * @param funding_script_pubkey the script pubkey of the fund output.
+   * @param fund_tx_id the transaction id of the fund transactions.
+   * @param fund_vout the vout of the fund output.
+   * @param fund_output_amount the value of the fund output.
+   */
+  static void SignCet(TransactionController* cet,
+                      const AdaptorSignature& adaptor_sig,
+                      const SchnorrSignature& oracle_signature,
+                      const Privkey funding_sk,
+                      const Script& funding_script_pubkey,
+                      const Txid& fund_tx_id, uint32_t fund_vout,
+                      const Amount& fund_output_amount);
 
   /**
    * @brief
    *
    * @param cets the transactions to verify the signatures against.
-   * @param signatures the signatures to verify.
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param remote_fund_pubkey the fund public key of the remote party.
-   * @param input_amount the input amount.
-   * @param fund_txid the id of the fund transaction
-   * @param fund_vout the vout of the fund output.
-   * @param verify_remote whether to verify the signature for the remote party
-   * (if true) of the local party (if false).
+   * @param signature_and_proofs the adaptor signatures and their proofs to
+   * verify.
+   * @param msgs the hash of the events outcome for the given CETs.
+   * @param pubkey the public key to verify the signature against.
+   * @param oracle_pubkey the public key of the oracle used for the associated
+   * event.
+   * @param oracle_r_value the r_value that the oracle will used to create a
+   * signature over the outcome of the associated event.
+   * @param funding_script_pubkey the script pubkey of the fund output.
+   * @param fund_output_amount the value of the fund output.
    * @return true
    * @return false
    */
-  static bool VerifyCetSignatures(
+  static bool VerifyCetAdaptorSignatures(
       const std::vector<TransactionController>& cets,
-      const std::vector<ByteData>& signatures, const Pubkey& local_fund_pubkey,
-      const Pubkey& remote_fund_pubkey, const Amount& input_amount,
-      const Txid& fund_txid, uint32_t fund_vout = 0, bool verify_remote = true);
-
-  /**
-   * @brief
-   *
-   * @param cet the transaction for which the signature must be verified.
-   * @param signature the signature to verify.
-   * @param pubkey the public key to verify the signature against.
-   * @param lock_script the lock script of the fund transaction.
-   * @param input_amount the amount locked in the fund transaction output.
-   * @param fund_txid the id of the fund transaction.
-   * @param fund_vout the vout of the fund transaction output (defaults to
-   * 0).
-   * @return true if the signature is valid.
-   * @return false otherwise.
-   */
-  static bool VerifyCetSignature(const TransactionController& cet,
-                                 const ByteData& signature,
-                                 const Pubkey& pubkey,
-                                 const Script& lock_script,
-                                 const Amount& input_amount,
-                                 const Txid& fund_txid, uint32_t fund_vout = 0);
+      const std::vector<AdaptorPair>& signature_and_proofs,
+      const std::vector<ByteData256>& msgs, const Pubkey& pubkey,
+      const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+      const Script& funding_script_pubkey, const Amount& fund_output_amount);
 
   /**
    * @brief Get the Raw Refund Tx Signature object
@@ -744,100 +496,6 @@ class CFD_DLC_EXPORT DlcManager {
                                       uint32_t fund_vout = 0);
 
   /**
-   * @brief
-   *
-   * @param cet the transaction to add signatures to.
-   * @param fund_lock_script the locking script of the fund transaction
-   * output.
-   * @param signatures the signatures to add.
-   * @param fund_tx_id the id of the fund transaction.
-   * @param fund_tx_vout the vout of the fund transaction output (defaults
-   * to 0).
-   */
-  static void AddSignaturesToCet(TransactionController* cet,
-                                 const Script& fund_lock_script,
-                                 const std::vector<ByteData>& signatures,
-                                 const Txid& fund_tx_id,
-                                 uint32_t fund_tx_vout = 0);
-
-  /**
-   * @brief
-   *
-   * @param cet the transaction to add signatures to.
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param remote_fund_pubkey the fund public key of the remote party.
-   * @param signatures the signatures to add.
-   * @param fund_tx_id the id of the fund transaction.
-   * @param fund_tx_vout the vout of the fund transaction output (defaults
-   * to 0).
-   */
-  static void AddSignaturesToCet(TransactionController* cet,
-                                 const Pubkey& local_fund_pubkey,
-                                 const Pubkey& remote_fund_pubkey,
-                                 const std::vector<ByteData>& signatures,
-                                 const Txid& fund_tx_id,
-                                 uint32_t fund_tx_vout = 0);
-
-  /**
-   * @brief Get the Raw Cet Signature object
-   *
-   * @param cet the transaction to get a signature for.
-   * @param privkey the private key to sign with.
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param remote_fund_pubkey the fund public key of the remote party.
-   * @param fund_amount the amount locked in the fund transaction output.
-   * @param fund_tx_id the fund transaction id.
-   * @param fund_tx_vout the vout of the fund transaction output (defaults
-   * to 0).
-   * @return ByteData the produced signature.
-   */
-  static ByteData GetRawCetSignature(const TransactionController& cet,
-                                     const Privkey& privkey,
-                                     const Pubkey& local_fund_pubkey,
-                                     const Pubkey& remote_fund_pubkey,
-                                     const Amount& fund_amount,
-                                     const Txid& fund_tx_id,
-                                     uint32_t fund_tx_vout = 0);
-
-  /**
-   * @brief Get Raw Cet Signatures for the given set of Cet.
-   *
-   * @param cets the transactions to get a signature for.
-   * @param privkey the private key to sign with.
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param remote_fund_pubkey the fund public key of the remote party.
-   * @param fund_amount the amount locked in the fund transaction output.
-   * @param fund_tx_id the fund transaction id.
-   * @param fund_tx_vout the vout of the fund transaction output (defaults
-   * to 0).
-   * @return ByteData the produced signature.
-   */
-  static std::vector<ByteData> GetRawCetSignatures(
-      const std::vector<TransactionController>& cets, const Privkey& privkey,
-      const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-      const Amount& fund_amount, const Txid& fund_tx_id,
-      uint32_t fund_tx_vout = 0);
-
-  /**
-   * @brief Get the Raw Cet Signature object
-   *
-   * @param cet the transaction to get a signature for.
-   * @param privkey the private key to sign with.
-   * @param fund_tx_lockscript the locking script of the fund transaction.
-   * @param fund_amount the amount locked in the fund transaction output.
-   * @param fund_tx_id the fund transaction id.
-   * @param fund_tx_vout the vout of the fund transaction output (defaults
-   * to 0).
-   * @return ByteData the produced signature.
-   */
-  static ByteData GetRawCetSignature(const TransactionController& cet,
-                                     const Privkey& privkey,
-                                     const Script& fund_tx_lockscript,
-                                     const Amount& fund_amount,
-                                     const Txid& fund_tx_id,
-                                     uint32_t fund_tx_vout = 0);
-
-  /**
    * @brief Get the Raw Funding Transaction Input Signature object
    *
    * @param funding_transaction the transaction for which to get a signature
@@ -856,70 +514,27 @@ class CFD_DLC_EXPORT DlcManager {
    * Note that proper fee should be computed ahead of using this function.
    *
    * @param outcomes the possible outcome values.
-   * @param oracle_pubkey the public key of the oracle.
-   * @param oracle_r_points the set of R points given by the oracle.
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param remote_fund_pubkey the fund public key of the remote party.
-   * @param local_sweep_pubkey the sweep public key of the local party.
-   * @param remote_sweep_pubkey the sweep public key of the remote party.
-   * @param local_change_address the change address of the local party.
-   * @param remote_change_address the change address of the remote party.
-   * @param local_final_address the final address of the local party.
-   * @param remote_final_address the final address of the remote party.
-   * @param local_input_amount the sum of the local party's input value.
-   * @param local_collateral_amount the value of the local party's
-   * collateral.
-   * @param remote_input_amount the sum of the remote party's input value.
-   * @param remote_collateral_amount the value of the remote party's
-   * collateral.
+   * @param local_params the parameters for the local party.
+   * @param remote_params the parameters for the remote party.
    * @param refund_locktime the unix time or block number after which the
    * refund transaction can be used.
-   * @param csv_delay the csv delay after which the penalty transaction can be
-   * used.
-   * @param local_inputs the utxos to use for the local party.
-   * @param remote_inputs the utxos to use for the remote party.
    * @param fee_rate the fee rate to compute the fees.
-   * @param maturity_time the expiration date of the contract.
    * @param option_dest (optional) destination address for the payment of the
    * option premium
    * @param option_premium (optional) value for the option premium
+   * @param fund_lock_time the lock time to use for the fund transaction
+   * (optional)
+   * @param cet_lock_time the lock time to use for the cet transactions
+   * (optional)
    * @return DlcTransactions a struct containing the necessary transaction
    * to establish a DLC.
    */
   static DlcTransactions CreateDlcTransactions(
-      const std::vector<DlcOutcome>& outcomes, const Pubkey& oracle_pubkey,
-      const std::vector<Pubkey>& oracle_r_points,
-      const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-      const Pubkey& local_sweep_pubkey, const Pubkey& remote_sweep_pubkey,
-      const Address& local_change_address, const Address& remote_change_address,
-      const Address& local_final_address, const Address& remote_final_address,
-      const Amount& local_input_amount, const Amount& local_collateral_amount,
-      const Amount& remote_input_amount, const Amount& remote_collateral_amount,
-      uint64_t refund_locktime, uint64_t csv_delay,
-      const std::vector<TxIn>& local_inputs,
-      const std::vector<TxIn>& remote_inputs, uint32_t fee_rate,
-      uint32_t maturity_time, const Address& option_dest = Address(),
-      const Amount& option_premium = Amount::CreateBySatoshiAmount(0));
-
-  /**
-   * @brief Create a Cet Redeem Script object
-   *
-   * @param local_fund_pubkey the fund public key of the local party.
-   * @param local_sweep_pubkey the sweep public key of the local party.
-   * @param remote_sweep_pubkey the sweep public key of the remote party.
-   * @param oracle_pubkey the public key of the oracle.
-   * @param oracle_r_points the R points for the particular event.
-   * @param messages the set of messages for the outcome represented by the
-   * CET.
-   * @param csv_delay the time after which the remote party can claim the "to
-   * local" party's output.
-   * @return Script
-   */
-  static Script CreateCetRedeemScript(
-      const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
-      const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
-      const std::vector<Pubkey>& oracle_r_points,
-      const std::vector<std::string> messages, uint64_t csv_delay);
+      const std::vector<DlcOutcome>& outcomes, const PartyParams& local_params,
+      const PartyParams& remote_params, uint64_t refund_locktime,
+      uint32_t fee_rate, const Address& option_dest = Address(),
+      const Amount& option_premium = Amount::CreateBySatoshiAmount(0),
+      const uint64_t fund_lock_time = 0, const uint64_t cet_lock_time = 0);
 
  private:
   /**
@@ -967,15 +582,10 @@ class CFD_DLC_EXPORT DlcManager {
    * fee rate.
    *
    * @param output the output.
-   * @param fee_rate the fee rate to consider.
-   * @param extra_size additional size to take into account in the decision
-   * (mainly used to add the cost of closing transaction when deciding for a CET
-   * output).
    * @return true if the output is dust.
    * @return false otherwise.
    */
-  static bool IsDustOutput(const TxOut& output, uint32_t fee_rate,
-                           uint32_t extra_size = 0);
+  static bool IsDustOutput(const TxOut& output);
 
   /**
    * @brief Get a raw signature for the given transaction.
@@ -1007,6 +617,22 @@ class CFD_DLC_EXPORT DlcManager {
       TransactionController* transaction, const Txid& prev_tx_id,
       uint32_t prev_tx_vout, const Script& multisig_script,
       const std::vector<ByteData>& signatures);
+
+  /**
+   * @brief Get the Change Output And Fee for a party.
+   *
+   * @param params the party parameters
+   * @param fee_rate the fee rate to apply
+   * @param option_premium the option premium value (optional)
+   * @param premium_dest the address where the premium should be sent to.
+   * @note If option_premium is non zero, the premium_dest value is required, or
+   * an exception will be thrown.
+   * @return std::tuple<TxOut, uint64_t, uint64_t>
+   */
+  static std::tuple<TxOut, uint64_t, uint64_t> GetChangeOutputAndFees(
+      const PartyParams& params, uint64_t fee_rate,
+      Amount option_premium = Amount::CreateBySatoshiAmount(0),
+      Address premium_dest = Address());
 };
 
 }  // namespace dlc

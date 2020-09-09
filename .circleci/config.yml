@@ -3,7 +3,7 @@ jobs:
   lint:
     working_directory: ~/cfd-dlc
     docker:
-      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.3
 
     steps:
       - checkout
@@ -12,7 +12,7 @@ jobs:
 
   build:
     docker:
-      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.3
     steps:
       - checkout
       - run:
@@ -23,7 +23,7 @@ jobs:
             - .
   test:
     docker:
-      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.3
     steps:
       - attach_workspace:
           at: .
@@ -32,7 +32,7 @@ jobs:
 
   coverage:
     docker:
-      - image: cryptogarageinc/cfd-dlc-ci:v0.0.1
+      - image: cryptogarageinc/cfd-dlc-ci:v0.0.3
     steps:
       - checkout
       - run:

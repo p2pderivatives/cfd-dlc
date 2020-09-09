@@ -1,3 +1,2 @@
 TEST_CFD_DLC_SOURCES = \
-    test_cfddlc_transactions.cpp \
-    test_cfddlc_util.cpp
+    test_cfddlc_transactions.cpp
