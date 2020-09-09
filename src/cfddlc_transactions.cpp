@@ -3,8 +3,10 @@
 #include "cfddlc/cfddlc_transactions.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "cfd/cfd_transaction.h"
@@ -13,10 +15,10 @@
 #include "cfdcore/cfdcore_common.h"
 #include "cfdcore/cfdcore_exception.h"
 #include "cfdcore/cfdcore_hdwallet.h"
+#include "cfdcore/cfdcore_schnorrsig.h"
 #include "cfdcore/cfdcore_script.h"
 #include "cfdcore/cfdcore_transaction.h"
 #include "cfdcore/cfdcore_util.h"
-#include "cfddlc/cfddlc_util.h"
 #include "secp256k1.h"  // NOLINT
 
 namespace cfd {
@@ -25,6 +27,7 @@ namespace dlc {
 using cfd::Amount;
 using cfd::Script;
 using cfd::TransactionController;
+using cfd::core::AdaptorUtil;
 using cfd::core::Address;
 using cfd::core::AddressType;
 using cfd::core::ByteData;
@@ -38,6 +41,7 @@ using cfd::core::HashUtil;
 using cfd::core::NetType;
 using cfd::core::Privkey;
 using cfd::core::Pubkey;
+using cfd::core::SchnorrUtil;
 using cfd::core::ScriptBuilder;
 using cfd::core::ScriptOperator;
 using cfd::core::ScriptUtil;
@@ -50,64 +54,64 @@ using cfd::core::TxOut;
 using cfd::core::WitnessVersion;
 
 static const uint32_t TX_VERSION = 2;
-static const uint32_t MIN_MATURITY_TIME = 500000000;
-static const uint32_t APPROXIMATE_CET_VBYTES = 190;
-static const uint32_t APPROXIMATE_CLOSING_VBYTES = 122;
-static const uint32_t APPROXIMATE_REFUND_VBYTES = 168;
-static const int WITNESS_SCALE_FACTOR = 4;
 
-TransactionController DlcManager::CreateCet(
-    const Script& cet_script, const Address& remote_final_address,
-    const Amount& local_payout, const Amount& remote_payout,
-    uint32_t maturity_time, uint32_t fee_rate, const Txid& fund_txid,
-    uint32_t fund_vout) {
-  if (maturity_time < MIN_MATURITY_TIME) {
-    throw CfdException(CfdError::kCfdIllegalArgumentError,
-                       "Maturity time must be greater than 500000000");
-  }
+static const uint64_t DUST_LIMIT = 1000;
 
-  auto cet_tx = TransactionController(TX_VERSION, maturity_time);
-  auto lock_script = ScriptUtil::CreateP2wshLockingScript(cet_script);
-  if (!IsDustOutput(TxOut(local_payout, lock_script), fee_rate,
-                    APPROXIMATE_CLOSING_VBYTES)) {
-    cet_tx.AddTxOut(lock_script, local_payout);
+const uint32_t FUND_TX_BASE_WEIGHT = 214;
+const uint32_t CET_BASE_WEIGHT = 498;
+
+TransactionController DlcManager::CreateCet(const TxOut& local_output,
+                                            const TxOut& remote_output,
+                                            const Txid& fund_tx_id,
+                                            const uint32_t fund_vout,
+                                            uint32_t lock_time) {
+  auto cet_tx = TransactionController(TX_VERSION, lock_time);
+  if (!IsDustOutput(local_output)) {
+    cet_tx.AddTxOut(local_output.GetLockingScript(), local_output.GetValue());
   }
-  if (!IsDustOutput(TxOut(remote_payout, remote_final_address), fee_rate)) {
-    cet_tx.AddTxOut(remote_final_address, remote_payout);
+  if (!IsDustOutput(remote_output)) {
+    cet_tx.AddTxOut(remote_output.GetLockingScript(), remote_output.GetValue());
   }
-  cet_tx.AddTxIn(fund_txid, fund_vout);
+  cet_tx.AddTxIn(fund_tx_id, fund_vout);
   return cet_tx;
 }
 
-TransactionController DlcManager::CreateCet(
-    const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
-    const Pubkey& remote_sweep_pubkey, const Address& remote_final_address,
-    const Pubkey& oracle_pubkey, const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint64_t csv_delay,
-    const Amount& local_payout, const Amount& remote_payout,
-    uint32_t maturity_time, uint32_t fee_rate, const Txid& fund_tx_id,
-    uint32_t fund_vout) {
-  auto cet_script = CreateCetRedeemScript(local_fund_pubkey, local_sweep_pubkey,
-                                          remote_sweep_pubkey, oracle_pubkey,
-                                          oracle_r_points, messages, csv_delay);
-  return CreateCet(cet_script, remote_final_address, local_payout,
-                   remote_payout, maturity_time, fee_rate, fund_tx_id,
-                   fund_vout);
+std::vector<TransactionController> DlcManager::CreateCets(
+    const Txid& fund_tx_id, const uint32_t fund_vout,
+    const Script& local_final_script_pubkey,
+    const Script& remote_final_script_pubkey,
+    const std::vector<DlcOutcome> outcomes, uint32_t lock_time) {
+  std::vector<TransactionController> cets;
+  cets.reserve(outcomes.size());
+
+  for (auto outcome : outcomes) {
+    TxOut local_output(outcome.local_payout, local_final_script_pubkey);
+    TxOut remote_output(outcome.remote_payout, remote_final_script_pubkey);
+    cets.push_back(CreateCet(local_output, remote_output, fund_tx_id, fund_vout,
+                             lock_time));
+  }
+
+  return cets;
+}
+
+static std::vector<Pubkey> GetOrderedPubkeys(const Pubkey& a, const Pubkey& b) {
+  return a.GetHex() < b.GetHex() ? std::vector<Pubkey>{a, b}
+                                 : std::vector<Pubkey>{b, a};
 }
 
 Script DlcManager::CreateFundTxLockingScript(const Pubkey& local_fund_pubkey,
                                              const Pubkey& remote_fund_pubkey) {
-  return ScriptUtil::CreateMultisigRedeemScript(
-      2, {local_fund_pubkey, remote_fund_pubkey});
+  auto pubkeys = GetOrderedPubkeys(local_fund_pubkey, remote_fund_pubkey);
+  return ScriptUtil::CreateMultisigRedeemScript(2, pubkeys);
 }
 
 TransactionController DlcManager::CreateFundTransaction(
     const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
     const Amount& output_amount, const std::vector<TxIn>& local_inputs,
     const TxOut& local_change_output, const std::vector<TxIn>& remote_inputs,
-    const TxOut& remote_change_output, const uint32_t fee_rate,
-    const Address& option_dest, const Amount& option_premium) {
-  auto transaction = TransactionController(TX_VERSION, 0);
+    const TxOut& remote_change_output, const Address& option_dest,
+    const Amount& option_premium, const uint64_t lock_time) {
+  auto transaction = TransactionController(TX_VERSION, lock_time);
   auto multi_sig_script =
       CreateFundTxLockingScript(local_fund_pubkey, remote_fund_pubkey);
   auto wit_script = ScriptUtil::CreateP2wshLockingScript(multi_sig_script);
@@ -119,22 +123,22 @@ TransactionController DlcManager::CreateFundTransaction(
   inputs.insert(inputs.end(), remote_inputs.begin(), remote_inputs.end());
 
   for (auto it = inputs.cbegin(); it != inputs.end(); ++it) {
-    transaction.AddTxIn(it->GetTxid(), it->GetVout());
+    transaction.AddTxIn(it->GetTxid(), it->GetVout(), it->GetUnlockingScript());
   }
 
-  if (!IsDustOutput(local_change_output, fee_rate)) {
+  if (!IsDustOutput(local_change_output)) {
     transaction.AddTxOut(local_change_output.GetLockingScript(),
                          local_change_output.GetValue());
   }
 
-  if (!IsDustOutput(remote_change_output, fee_rate)) {
+  if (!IsDustOutput(remote_change_output)) {
     transaction.AddTxOut(remote_change_output.GetLockingScript(),
                          remote_change_output.GetValue());
   }
 
   if (option_premium > 0) {
     TxOut option_out(option_premium, option_dest);
-    if (!IsDustOutput(option_out, fee_rate)) {
+    if (!IsDustOutput(option_out)) {
       transaction.AddTxOut(option_out.GetLockingScript(),
                            option_out.GetValue());
     }
@@ -143,301 +147,16 @@ TransactionController DlcManager::CreateFundTransaction(
   return transaction;
 }
 
-TransactionController DlcManager::CreateFundTransaction(
-    const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-    const Amount& local_input_amount, const Amount& local_collateral_amount,
-    const Amount& remote_input_amount, const Amount& remote_collateral_amount,
-    const std::vector<TxIn>& local_inputs, const Address& local_change_address,
-    const std::vector<TxIn>& remote_inputs,
-    const Address& remote_change_address, uint32_t fee_rate,
-    const Address& option_dest, const Amount& option_premium) {
-  auto total_fee =
-      (APPROXIMATE_CET_VBYTES + APPROXIMATE_CLOSING_VBYTES) * fee_rate;
-  auto total_fee_amount = Amount::CreateBySatoshiAmount(total_fee);
-  auto fund_output_amount =
-      local_collateral_amount + remote_collateral_amount + total_fee_amount;
-
-  auto local_change = local_input_amount.GetSatoshiValue() -
-                      option_premium.GetSatoshiValue() -
-                      local_collateral_amount.GetSatoshiValue() - total_fee / 2;
-  auto remote_change = remote_input_amount.GetSatoshiValue() -
-                       remote_collateral_amount.GetSatoshiValue() -
-                       total_fee / 2;
-  if (local_change < 0) {
-    throw CfdException(CfdError::kCfdIllegalArgumentError,
-                       "Not enough fund for local input.");
-  }
-
-  if (remote_change < 0) {
-    throw CfdException(CfdError::kCfdIllegalArgumentError,
-                       "Not enough fund for remote input.");
-  }
-
-  auto local_change_amount = Amount::CreateBySatoshiAmount(local_change);
-  auto remote_change_amount = Amount::CreateBySatoshiAmount(remote_change);
-
-  TxOut local_change_output(local_change_amount, local_change_address);
-  TxOut remote_change_output(remote_change_amount, remote_change_address);
-
-  auto fund_tx = CreateFundTransaction(
-      local_fund_pubkey, remote_fund_pubkey, fund_output_amount, local_inputs,
-      local_change_output, remote_inputs, remote_change_output, fee_rate,
-      option_dest, option_premium);
-  uint32_t common_size = fund_tx.GetSizeIgnoreTxIn();
-  uint32_t local_input_size = GetTotalInputVSize(local_inputs);
-  uint32_t remote_input_size = GetTotalInputVSize(remote_inputs);
-  auto local_fund_fee = (common_size / 2 + local_input_size) * fee_rate;
-  auto remote_fund_fee = (common_size / 2 + remote_input_size) * fee_rate;
-
-  local_change = local_change - local_fund_fee;
-  remote_change = remote_change - remote_fund_fee;
-
-  if (local_change < 0) {
-    throw CfdException(CfdError::kCfdIllegalArgumentError,
-                       "Not enough fund for local input.");
-  }
-
-  if (remote_change < 0) {
-    throw CfdException(CfdError::kCfdIllegalArgumentError,
-                       "Not enough fund for remote input.");
-  }
-
-  local_change_amount = Amount::CreateBySatoshiAmount(local_change);
-  remote_change_amount = Amount::CreateBySatoshiAmount(remote_change);
-
-  local_change_output = TxOut(local_change_amount, local_change_address);
-  remote_change_output = TxOut(remote_change_amount, remote_change_address);
-
-  return CreateFundTransaction(
-      local_fund_pubkey, remote_fund_pubkey, fund_output_amount, local_inputs,
-      local_change_output, remote_inputs, remote_change_output, fee_rate,
-      option_dest, option_premium);
-}
-
 TransactionController DlcManager::CreateRefundTransaction(
-    const Address& local_out_address, const Address& remote_out_address,
-    const Amount& local_amount, const Amount& remote_amount, uint32_t lock_time,
-    const Txid& fund_tx_id, uint32_t fund_vout) {
+    const Script& local_final_script_pubkey,
+    const Script& remote_final_script_pubkey, const Amount& local_amount,
+    const Amount& remote_amount, uint32_t lock_time, const Txid& fund_tx_id,
+    uint32_t fund_vout) {
   auto transaction_controller = TransactionController(TX_VERSION, lock_time);
   transaction_controller.AddTxIn(fund_tx_id, fund_vout);
-  transaction_controller.AddTxOut(local_out_address, local_amount);
-  transaction_controller.AddTxOut(remote_out_address, remote_amount);
+  transaction_controller.AddTxOut(local_final_script_pubkey, local_amount);
+  transaction_controller.AddTxOut(remote_final_script_pubkey, remote_amount);
   return transaction_controller;
-}
-
-TransactionController DlcManager::CreateMutualClosingTransaction(
-    const Address& local_out_address, const Address& remote_out_address,
-    const Amount& local_amount, const Amount& remote_amount, uint32_t fee_rate,
-    const Txid& fund_tx_id, uint32_t fund_vout) {
-  auto transaction_controller = TransactionController(TX_VERSION, 0);
-  transaction_controller.AddTxIn(fund_tx_id, fund_vout);
-  if (!IsDustOutput(TxOut(local_amount, local_out_address), fee_rate)) {
-    transaction_controller.AddTxOut(local_out_address, local_amount);
-  }
-
-  if (!IsDustOutput(TxOut(remote_amount, remote_out_address), fee_rate)) {
-    transaction_controller.AddTxOut(remote_out_address, remote_amount);
-  }
-
-  return transaction_controller;
-}
-
-ByteData DlcManager::GetRawMutualClosingTxSignature(
-    const TransactionController& mutual_closing_tx, const Privkey& privkey,
-    const Script& fund_lockscript, const Amount& input_amount,
-    const Txid& fund_tx_id, const uint32_t fund_tx_vout) {
-  return GetRawTxWitSigAllSignature(mutual_closing_tx, privkey, fund_tx_id,
-                                    fund_tx_vout, fund_lockscript,
-                                    input_amount);
-}
-
-ByteData DlcManager::GetRawMutualClosingTxSignature(
-    const TransactionController& mutual_closing_tx, const Privkey& privkey,
-    const Pubkey& local_pubkey, const Pubkey& remote_pubkey,
-    const Amount& input_amount, const Txid& fund_tx_id,
-    const uint32_t fund_tx_vout) {
-  auto script = CreateFundTxLockingScript(local_pubkey, remote_pubkey);
-  return GetRawMutualClosingTxSignature(mutual_closing_tx, privkey, script,
-                                        input_amount, fund_tx_id, fund_tx_vout);
-}
-
-void DlcManager::AddSignaturesToMutualClosingTx(
-    TransactionController* mutual_closing_tx, const Script& fund_lockscript,
-    const std::vector<ByteData>& signatures, const Txid& fund_tx_id,
-    const uint32_t fund_tx_vout) {
-  AddSignaturesForMultiSigInput(mutual_closing_tx, fund_tx_id, fund_tx_vout,
-                                fund_lockscript, signatures);
-}
-
-void DlcManager::AddSignaturesToMutualClosingTx(
-    TransactionController* mutual_closing_tx, const Pubkey& local_pubkey,
-    const Pubkey& remote_pubkey, const std::vector<ByteData>& signatures,
-    const Txid& fund_tx_id, const uint32_t fund_tx_vout) {
-  auto script = CreateFundTxLockingScript(local_pubkey, remote_pubkey);
-  AddSignaturesToMutualClosingTx(mutual_closing_tx, script, signatures,
-                                 fund_tx_id, fund_tx_vout);
-}
-
-bool DlcManager::VerifyMutualClosingTxSignature(
-    const TransactionController& mutual_closing_tx, const ByteData& signature,
-    const Pubkey& local_pubkey, const Pubkey& remote_pubkey,
-    const Amount& input_amount, const Txid& fund_txid, uint32_t fund_vout,
-    bool verify_remote) {
-  auto lock_script = CreateFundTxLockingScript(local_pubkey, remote_pubkey);
-  auto pubkey = verify_remote ? remote_pubkey : local_pubkey;
-  return VerifyMutualClosingTxSignature(mutual_closing_tx, signature, pubkey,
-                                        lock_script, input_amount, fund_txid,
-                                        fund_vout);
-}
-
-bool DlcManager::VerifyMutualClosingTxSignature(
-    const TransactionController& mutual_closing_tx, const ByteData& signature,
-    const Pubkey& pubkey, const Script& lock_script, const Amount& input_amount,
-    const Txid& fund_txid, uint32_t fund_vout) {
-  return mutual_closing_tx.VerifyInputSignature(
-      signature, pubkey, fund_txid, fund_vout, lock_script, SigHashType(),
-      input_amount, WitnessVersion::kVersion0);
-}
-
-TransactionController DlcManager::CreateClosingTransaction(
-    const Address& address, const Amount& amount, const Txid& cet_id,
-    uint32_t cet_vout) {
-  auto closing_tx = TransactionController(TX_VERSION, 0);
-  closing_tx.AddTxIn(cet_id, cet_vout);
-  closing_tx.AddTxOut(address, amount);
-  return closing_tx;
-}
-
-void DlcManager::SignClosingTransactionInput(
-    TransactionController* closing_transaction, const Privkey& local_privkey,
-    const Pubkey& local_sweep_pubkey, const std::vector<ByteData>& oracle_sigs,
-    const Script& cet_script, const Amount& value, const Txid& cet_tx_id,
-    uint32_t cet_vout) {
-  auto raw_signature = GetRawClosingTransactionSignature(
-      *closing_transaction, local_privkey, local_sweep_pubkey, oracle_sigs,
-      cet_script, value, cet_tx_id, cet_vout);
-  auto signature =
-      CryptoUtil::ConvertSignatureToDer(raw_signature, SigHashType());
-  std::vector<std::string> signed_params;
-  signed_params.push_back(signature.GetHex());
-  signed_params.push_back("01");
-  closing_transaction->AddWitnessStack(cet_tx_id, cet_vout, signed_params,
-                                       cet_script);
-}
-
-void DlcManager::SignClosingTransactionInput(
-    TransactionController* closing_transaction,
-    const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-    const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
-    const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint32_t csv_delay,
-    const std::vector<ByteData>& oracle_sigs, const Amount& value,
-    const Txid& cet_tx_id, uint32_t cet_vout) {
-  auto cet_script = CreateCetRedeemScript(
-      local_fund_privkey.GeneratePubkey(), local_sweep_pubkey,
-      remote_sweep_pubkey, oracle_pubkey, oracle_r_points, messages, csv_delay);
-  return SignClosingTransactionInput(closing_transaction, local_fund_privkey,
-                                     local_sweep_pubkey, oracle_sigs,
-                                     cet_script, value, cet_tx_id, cet_vout);
-}
-
-ByteData DlcManager::GetRawClosingTransactionSignature(
-    const TransactionController& closing_transaction,
-    const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-    const std::vector<ByteData>& oracle_sig, const Script& cet_script,
-    const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout) {
-  auto hash_type = SigHashType();
-  auto sig_hash_str = closing_transaction.CreateSignatureHash(
-      cet_tx_id, cet_vout, cet_script, hash_type, value,
-      WitnessVersion::kVersion0);
-  auto sig_hash = ByteData256(sig_hash_str);
-  auto tweaked_key = DlcUtil::GetTweakedPrivkey(oracle_sig, local_fund_privkey,
-                                                local_sweep_pubkey);
-  return SignatureUtil::CalculateEcSignature(sig_hash, tweaked_key);
-}
-
-ByteData DlcManager::GetRawClosingTransactionSignature(
-    const TransactionController& closing_transaction,
-    const Privkey& local_fund_privkey, const Pubkey& local_sweep_pubkey,
-    const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
-    const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint32_t csv_delay,
-    const std::vector<ByteData>& oracle_sigs, const Amount& value,
-    const Txid& cet_tx_id, uint32_t cet_vout) {
-  auto cet_script = CreateCetRedeemScript(
-      local_fund_privkey.GeneratePubkey(), local_sweep_pubkey,
-      remote_sweep_pubkey, oracle_pubkey, oracle_r_points, messages, csv_delay);
-  return GetRawClosingTransactionSignature(
-      closing_transaction, local_fund_privkey, local_sweep_pubkey, oracle_sigs,
-      cet_script, value, cet_tx_id, cet_vout);
-}
-
-TransactionController DlcManager::CreatePenaltyTransaction(
-    const Address& address, const Amount& amount, const Txid& cet_id,
-    uint32_t cet_vout) {
-  auto penalty_tx = TransactionController(TX_VERSION, 0);
-  penalty_tx.AddTxIn(cet_id, cet_vout);
-  penalty_tx.AddTxOut(address, amount);
-  return penalty_tx;
-}
-
-ByteData DlcManager::GetRawPenaltyTransactionSignature(
-    const TransactionController& penalty_transaction, const Privkey& privkey,
-    const Script& cet_script, const Amount& value, const Txid& cet_tx_id,
-    uint32_t cet_vout) {
-  auto hash_type = SigHashType();
-  auto sig_hash_str = penalty_transaction.CreateSignatureHash(
-      cet_tx_id, cet_vout, cet_script, hash_type, value,
-      WitnessVersion::kVersion0);
-  auto sig_hash = ByteData256(sig_hash_str);
-  return SignatureUtil::CalculateEcSignature(sig_hash, privkey);
-}
-
-ByteData DlcManager::GetRawPenaltyTransactionSignature(
-    const TransactionController& penalty_transaction,
-    const Privkey& remote_sweep_privkey, const Pubkey& local_fund_pubkey,
-    const Pubkey& local_sweep_pubkey, const Pubkey& oracle_public_key,
-    const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint32_t delay,
-    const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout) {
-  auto cet_script = CreateCetRedeemScript(local_fund_pubkey, local_sweep_pubkey,
-                                          remote_sweep_privkey.GeneratePubkey(),
-                                          oracle_public_key, oracle_r_points,
-                                          messages, delay);
-
-  return GetRawPenaltyTransactionSignature(penalty_transaction,
-                                           remote_sweep_privkey, cet_script,
-                                           value, cet_tx_id, cet_vout);
-}
-
-void DlcManager::SignPenaltyTransactionInput(
-    TransactionController* penalty_transaction, const Privkey& privkey,
-    const Script& cet_script, const Amount& value, const Txid& cet_tx_id,
-    uint32_t cet_vout) {
-  auto raw_signature = GetRawPenaltyTransactionSignature(
-      *penalty_transaction, privkey, cet_script, value, cet_tx_id, cet_vout);
-  auto signature =
-      CryptoUtil::ConvertSignatureToDer(raw_signature, SigHashType());
-  std::vector<std::string> signed_params;
-  signed_params.push_back(signature.GetHex());
-  signed_params.push_back("00");
-  penalty_transaction->AddWitnessStack(cet_tx_id, cet_vout, signed_params,
-                                       cet_script);
-}
-
-void DlcManager::SignPenaltyTransactionInput(
-    TransactionController* penalty_transaction,
-    const Privkey& remote_sweep_privkey, const Pubkey& local_fund_pubkey,
-    const Pubkey& local_sweep_pubkey, const Pubkey& oracle_public_key,
-    const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string>& messages, uint32_t delay,
-    const Amount& value, const Txid& cet_tx_id, uint32_t cet_vout) {
-  auto cet_script = CreateCetRedeemScript(local_fund_pubkey, local_sweep_pubkey,
-                                          remote_sweep_privkey.GeneratePubkey(),
-                                          oracle_public_key, oracle_r_points,
-                                          messages, delay);
-  return SignPenaltyTransactionInput(penalty_transaction, remote_sweep_privkey,
-                                     cet_script, value, cet_tx_id, cet_vout);
 }
 
 void DlcManager::SignFundTransactionInput(
@@ -470,50 +189,106 @@ bool DlcManager::VerifyFundTxSignature(const TransactionController& fund_tx,
       input_amount, WitnessVersion::kVersion0);
 }
 
-bool DlcManager::VerifyCetSignature(const TransactionController& cet,
-                                    const ByteData& signature,
-                                    const Pubkey& local_pubkey,
-                                    const Pubkey& remote_pubkey,
-                                    const Amount& input_amount,
-                                    const Txid& fund_txid, uint32_t fund_vout,
-                                    bool verify_remote) {
-  auto lock_script = CreateFundTxLockingScript(local_pubkey, remote_pubkey);
-  auto pubkey = verify_remote ? remote_pubkey : local_pubkey;
-  return VerifyCetSignature(cet, signature, pubkey, lock_script, input_amount,
-                            fund_txid, fund_vout);
+AdaptorPair DlcManager::CreateCetAdaptorSignature(
+    const TransactionController& cet, const SchnorrPubkey& oracle_pubkey,
+    const SchnorrPubkey& oracle_r_value, const Privkey& funding_sk,
+    const Script& funding_script_pubkey, const Amount& total_collateral,
+    const ByteData256& msg) {
+  auto adaptor_point =
+      SchnorrUtil::ComputeSigPoint(msg, oracle_r_value, oracle_pubkey);
+  auto sig_hash = cet.GetTransaction().GetSignatureHash(
+      0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
+      WitnessVersion::kVersion0);
+  return AdaptorUtil::Sign(sig_hash, funding_sk, adaptor_point);
 }
 
-bool DlcManager::VerifyCetSignatures(
+std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
-    const std::vector<ByteData>& signatures, const Pubkey& local_pubkey,
-    const Pubkey& remote_pubkey, const Amount& input_amount,
-    const Txid& fund_txid, uint32_t fund_vout, bool verify_remote) {
-  bool all_valid = true;
-
-  if (cets.size() != signatures.size()) {
-    throw CfdException(
-        CfdError::kCfdIllegalArgumentError,
-        "Number of transactions and number of signatures was different.");
+    const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+    const Privkey& funding_sk, const Script& funding_script_pubkey,
+    const Amount& total_collateral, const std::vector<ByteData256>& msgs) {
+  size_t nb = cets.size();
+  if (nb != msgs.size()) {
+    throw CfdException(CfdError::kCfdIllegalArgumentError,
+                       "Number of cets differ from number of messages");
   }
 
-  for (size_t i = 0; i < cets.size() && all_valid; i++) {
-    all_valid &=
-        VerifyCetSignature(cets[i], signatures[i], local_pubkey, remote_pubkey,
-                           input_amount, fund_txid, fund_vout, verify_remote);
+  std::vector<AdaptorPair> sigs;
+  for (size_t i = 0; i < nb; i++) {
+    sigs.push_back(CreateCetAdaptorSignature(
+        cets[i], oracle_pubkey, oracle_r_value, funding_sk,
+        funding_script_pubkey, total_collateral, msgs[i]));
+  }
+
+  return sigs;
+}
+
+bool DlcManager::VerifyCetAdaptorSignature(
+    const AdaptorPair& adaptor_pair, const TransactionController& cet,
+    const Pubkey& pubkey, const SchnorrPubkey& oracle_pubkey,
+    const SchnorrPubkey& oracle_r_value, const Script& funding_script_pubkey,
+    const Amount& total_collateral, const ByteData256& msg) {
+  auto adaptor_point =
+      SchnorrUtil::ComputeSigPoint(msg, oracle_r_value, oracle_pubkey);
+  auto sig_hash = cet.GetTransaction().GetSignatureHash(
+      0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
+      WitnessVersion::kVersion0);
+  return AdaptorUtil::Verify(adaptor_pair.signature, adaptor_pair.proof,
+                             adaptor_point, sig_hash, pubkey);
+}
+
+bool DlcManager::VerifyCetAdaptorSignatures(
+    const std::vector<TransactionController>& cets,
+    const std::vector<AdaptorPair>& signature_and_proofs,
+    const std::vector<ByteData256>& msgs, const Pubkey& pubkey,
+    const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+    const Script& funding_script_pubkey, const Amount& total_collateral) {
+  auto nb = cets.size();
+  if (nb != signature_and_proofs.size() || nb != msgs.size()) {
+    throw CfdException(
+        CfdError::kCfdIllegalArgumentError,
+        "Number of transactions, signatures and messages differs.");
+  }
+
+  bool all_valid = true;
+
+  for (size_t i = 0; i < nb && all_valid; i++) {
+    all_valid &= VerifyCetAdaptorSignature(
+        signature_and_proofs[i], cets[i], pubkey, oracle_pubkey, oracle_r_value,
+        funding_script_pubkey, total_collateral, msgs[i]);
   }
 
   return all_valid;
 }
 
-bool DlcManager::VerifyCetSignature(const TransactionController& cet,
-                                    const ByteData& signature,
-                                    const Pubkey& pubkey,
-                                    const Script& lock_script,
-                                    const Amount& input_amount,
-                                    const Txid& fund_txid, uint32_t fund_vout) {
-  return cet.VerifyInputSignature(signature, pubkey, fund_txid, fund_vout,
-                                  lock_script, SigHashType(), input_amount,
-                                  WitnessVersion::kVersion0);
+void DlcManager::SignCet(TransactionController* cet,
+                         const AdaptorSignature& adaptor_sig,
+                         const SchnorrSignature& oracle_signature,
+                         const Privkey funding_sk,
+                         const Script& funding_script_pubkey,
+                         const Txid& fund_tx_id, uint32_t fund_vout,
+                         const Amount& fund_amount) {
+  auto adaptor_secret = oracle_signature.GetPrivkey();
+  auto adapted_sig = AdaptorUtil::Adapt(adaptor_sig, adaptor_secret);
+  auto sig_hash = cet->GetTransaction().GetSignatureHash(
+      0, funding_script_pubkey.GetData(), SigHashType(), fund_amount,
+      WitnessVersion::kVersion0);
+  auto own_sig = SignatureUtil::CalculateEcSignature(sig_hash, funding_sk);
+  auto pubkeys =
+      ScriptUtil::ExtractPubkeysFromMultisigScript(funding_script_pubkey);
+  auto own_pubkey_hex = funding_sk.GetPubkey().GetHex();
+  if (own_pubkey_hex == pubkeys[0].GetHex()) {
+    AddSignaturesForMultiSigInput(cet, fund_tx_id, fund_vout,
+                                  funding_script_pubkey,
+                                  {own_sig, adapted_sig});
+  } else if (own_pubkey_hex == pubkeys[1].GetHex()) {
+    AddSignaturesForMultiSigInput(cet, fund_tx_id, fund_vout,
+                                  funding_script_pubkey,
+                                  {adapted_sig, own_sig});
+  } else {
+    throw new CfdException(CfdError::kCfdIllegalArgumentError,
+                           "Public key not part of the multi sig script.");
+  }
 }
 
 ByteData DlcManager::GetRawFundingTransactionInputSignature(
@@ -545,25 +320,6 @@ void DlcManager::AddSignaturesForMultiSigInput(
                                multisig_script);
 }
 
-void DlcManager::AddSignaturesToCet(TransactionController* cet,
-                                    const Script& fund_lockscript,
-                                    const std::vector<ByteData>& signatures,
-                                    const Txid& fund_tx_id,
-                                    uint32_t fund_tx_vout) {
-  AddSignaturesForMultiSigInput(cet, fund_tx_id, fund_tx_vout, fund_lockscript,
-                                signatures);
-}
-
-void DlcManager::AddSignaturesToCet(TransactionController* cet,
-                                    const Pubkey& local_pubkey,
-                                    const Pubkey& remote_pubkey,
-                                    const std::vector<ByteData>& signatures,
-                                    const Txid& fund_tx_id,
-                                    uint32_t fund_tx_vout) {
-  auto script = CreateFundTxLockingScript(local_pubkey, remote_pubkey);
-  AddSignaturesToCet(cet, script, signatures, fund_tx_id, fund_tx_vout);
-}
-
 void DlcManager::AddSignaturesToRefundTx(
     TransactionController* refund_tx, const Script& fund_lockscript,
     const std::vector<ByteData>& signatures, const Txid& fund_tx_id,
@@ -590,41 +346,6 @@ ByteData DlcManager::GetRawTxWitSigAllSignature(
       WitnessVersion::kVersion0);
   auto sig_hash = ByteData256(sig_hash_str);
   return SignatureUtil::CalculateEcSignature(sig_hash, privkey);
-}
-
-std::vector<ByteData> DlcManager::GetRawCetSignatures(
-    const std::vector<TransactionController>& cets, const Privkey& privkey,
-    const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-    const Amount& fund_amount, const Txid& fund_tx_id, uint32_t fund_tx_vout) {
-  std::vector<ByteData> signatures;
-  signatures.reserve(cets.size());
-  for (auto cet : cets) {
-    auto signature =
-        GetRawCetSignature(cet, privkey, local_fund_pubkey, remote_fund_pubkey,
-                           fund_amount, fund_tx_id, fund_tx_vout);
-    signatures.push_back(signature);
-  }
-
-  return signatures;
-}
-
-ByteData DlcManager::GetRawCetSignature(const TransactionController& cet,
-                                        const Privkey& privkey,
-                                        const Script& fund_tx_lockscript,
-                                        const Amount& fund_amount,
-                                        const Txid& fund_tx_id,
-                                        uint32_t fund_tx_vout) {
-  return GetRawTxWitSigAllSignature(cet, privkey, fund_tx_id, fund_tx_vout,
-                                    fund_tx_lockscript, fund_amount);
-}
-
-ByteData DlcManager::GetRawCetSignature(
-    const TransactionController& cet, const Privkey& privkey,
-    const Pubkey& local_pubkey, const Pubkey& remote_pubkey,
-    const Amount& fund_amount, const Txid& fund_tx_id, uint32_t fund_tx_vout) {
-  auto redeem_script = CreateFundTxLockingScript(local_pubkey, remote_pubkey);
-  return GetRawCetSignature(cet, privkey, redeem_script, fund_amount,
-                            fund_tx_id, fund_tx_vout);
 }
 
 bool DlcManager::VerifyRefundTxSignature(
@@ -667,87 +388,74 @@ ByteData DlcManager::GetRawRefundTxSignature(
 }
 
 DlcTransactions DlcManager::CreateDlcTransactions(
-    const std::vector<DlcOutcome>& outcomes, const Pubkey& oracle_pubkey,
-    const std::vector<Pubkey>& oracle_r_points, const Pubkey& local_fund_pubkey,
-    const Pubkey& remote_fund_pubkey, const Pubkey& local_sweep_pubkey,
-    const Pubkey& remote_sweep_pubkey, const Address& local_change_address,
-    const Address& remote_change_address, const Address& local_final_address,
-    const Address& remote_final_address, const Amount& local_input_amount,
-    const Amount& local_collateral_amount, const Amount& remote_input_amount,
-    const Amount& remote_collateral_amount, uint64_t refund_locktime,
-    uint64_t csv_delay, const std::vector<TxIn>& local_inputs,
-    const std::vector<TxIn>& remote_inputs, uint32_t fee_rate,
-    uint32_t maturity_time, const Address& option_dest,
-    const Amount& option_premium) {
+    const std::vector<DlcOutcome>& outcomes, const PartyParams& local_params,
+    const PartyParams& remote_params, uint64_t refund_locktime,
+    uint32_t fee_rate, const Address& option_dest, const Amount& option_premium,
+    uint64_t fund_lock_time, uint64_t cet_lock_time) {
+  auto total_collateral = local_params.collateral + remote_params.collateral;
+
+  for (auto outcome : outcomes) {
+    if (outcome.local_payout + outcome.remote_payout != total_collateral) {
+      throw CfdException(CfdError::kCfdIllegalArgumentError,
+                         "Sum of outcomes not equal to total collateral.");
+    }
+  }
+
+  TxOut local_change_output;
+  uint64_t local_fund_fee;
+  uint64_t local_cet_fee;
+  std::tie(local_change_output, local_fund_fee, local_cet_fee) =
+      GetChangeOutputAndFees(local_params, fee_rate, option_premium,
+                             option_dest);
+
+  TxOut remote_change_output;
+  uint64_t remote_fund_fee;
+  uint64_t remote_cet_fee;
+  std::tie(remote_change_output, remote_fund_fee, remote_cet_fee) =
+      GetChangeOutputAndFees(remote_params, fee_rate);
+
+  auto fund_output_value = local_params.input_amount +
+                           remote_params.input_amount -
+                           local_change_output.GetValue().GetSatoshiValue() -
+                           remote_change_output.GetValue().GetSatoshiValue() -
+                           local_fund_fee - remote_fund_fee - option_premium;
+
+  if (total_collateral + local_cet_fee + remote_cet_fee != fund_output_value) {
+    throw CfdException(CfdError::kCfdInternalError,
+                       "Fee computation doesn't match.");
+  }
+
+  std::vector<TxIn> local_inputs;
+
+  for (auto input_info : local_params.inputs_info) {
+    local_inputs.push_back(input_info.input);
+  }
+
+  std::vector<TxIn> remote_inputs;
+
+  for (auto input_info : remote_params.inputs_info) {
+    remote_inputs.push_back(input_info.input);
+  }
+
   auto fund_tx = CreateFundTransaction(
-      local_fund_pubkey, remote_fund_pubkey, local_input_amount,
-      local_collateral_amount, remote_input_amount, remote_collateral_amount,
-      local_inputs, local_change_address, remote_inputs, remote_change_address,
-      fee_rate, option_dest, option_premium);
-  auto nb_outcomes = outcomes.size();
+      local_params.fund_pubkey, remote_params.fund_pubkey, fund_output_value,
+      local_inputs, local_change_output, remote_inputs, remote_change_output,
+      option_dest, option_premium, fund_lock_time);
 
-  std::vector<TransactionController> local_cets;
-  local_cets.reserve(nb_outcomes);
-  std::vector<TransactionController> remote_cets;
-  remote_cets.reserve(nb_outcomes);
+  // the given lock time.
   auto fund_tx_id = fund_tx.GetTransaction().GetTxid();
-  auto closing_fee =
-      Amount::CreateBySatoshiAmount(fee_rate * APPROXIMATE_CLOSING_VBYTES);
-  for (int i = 0; (size_t)i < nb_outcomes; i++) {
-    auto local_cet = CreateCet(
-        local_fund_pubkey, local_sweep_pubkey, remote_sweep_pubkey,
-        remote_final_address, oracle_pubkey, oracle_r_points,
-        outcomes[i].messages, csv_delay, outcomes[i].local_payout + closing_fee,
-        outcomes[i].remote_payout, maturity_time, fee_rate, fund_tx_id, 0);
-    local_cets.push_back(local_cet);
-    auto remote_cet = CreateCet(
-        remote_fund_pubkey, remote_sweep_pubkey, local_sweep_pubkey,
-        local_final_address, oracle_pubkey, oracle_r_points,
-        outcomes[i].messages, csv_delay,
-        outcomes[i].remote_payout + closing_fee, outcomes[i].local_payout,
-        maturity_time, fee_rate, fund_tx_id, 0);
-    remote_cets.push_back(remote_cet);
-  }
+  uint32_t fund_vout = 0;
 
-  auto fee_back_per_party =
-      ((APPROXIMATE_CLOSING_VBYTES + APPROXIMATE_CET_VBYTES -
-        APPROXIMATE_REFUND_VBYTES) *
-       fee_rate) /
-      2;
-  auto refund_tx =
-      CreateRefundTransaction(local_final_address, remote_final_address,
-                              local_collateral_amount + fee_back_per_party,
-                              remote_collateral_amount + fee_back_per_party,
-                              refund_locktime, fund_tx_id, 0);
-  return {fund_tx, local_cets, remote_cets, refund_tx};
-}
+  auto cets =
+      CreateCets(fund_tx_id, fund_vout, local_params.final_script_pubkey,
+                 remote_params.final_script_pubkey, outcomes, cet_lock_time);
 
-Script DlcManager::CreateCetRedeemScript(
-    const Pubkey& local_fund_pubkey, const Pubkey& local_sweep_pubkey,
-    const Pubkey& remote_sweep_pubkey, const Pubkey& oracle_pubkey,
-    const std::vector<Pubkey>& oracle_r_points,
-    const std::vector<std::string> messages, uint64_t csv_delay) {
-  auto combine_pubkey =
-      DlcUtil::GetCombinedKey(oracle_pubkey, oracle_r_points, messages,
-                              local_fund_pubkey, local_sweep_pubkey);
+  auto refund_tx = CreateRefundTransaction(
+      local_params.final_script_pubkey, remote_params.final_script_pubkey,
+      local_params.collateral, remote_params.collateral, refund_locktime,
+      fund_tx_id, fund_vout);
 
-  ScriptBuilder builder;
-  builder.AppendOperator(ScriptOperator::OP_IF);
-  builder.AppendData(combine_pubkey);
-  builder.AppendOperator(ScriptOperator::OP_ELSE);
-  builder.AppendData(csv_delay);
-  builder.AppendOperator(ScriptOperator::OP_CHECKSEQUENCEVERIFY);
-  builder.AppendOperator(ScriptOperator::OP_DROP);
-  builder.AppendData(remote_sweep_pubkey);
-  builder.AppendOperator(ScriptOperator::OP_ENDIF);
-  builder.AppendOperator(ScriptOperator::OP_CHECKSIG);
-  Script script = builder.Build();
-
-  if (!ScriptUtil::IsValidRedeemScript(script)) {
-    throw CfdException(CfdError::kCfdIllegalStateError,
-                       "CETxLockingScript size is over maximum size.");
-  }
-  return script;
+  return {fund_tx, cets, refund_tx};
 }
 
 uint32_t DlcManager::GetTotalInputVSize(const std::vector<TxIn>& inputs) {
@@ -763,23 +471,53 @@ uint32_t DlcManager::GetTotalInputVSize(const std::vector<TxIn>& inputs) {
   return total_size;
 }
 
-bool DlcManager::IsDustOutput(const TxOut& output, uint32_t fee_rate,
-                              uint32_t extra_size) {
-  TxOutReference txout_ref(output);
-  size_t nSize = txout_ref.GetSerializeSize();
-  std::vector<unsigned char> witnessprogram;
+bool DlcManager::IsDustOutput(const TxOut& output) {
+  return output.GetValue() < DUST_LIMIT;
+}
 
-  if (txout_ref.GetLockingScript().IsWitnessProgram()) {
-    // sum the sizes of the parts of a transaction input
-    // with 75% segwit discount applied to the script size.
-    nSize += (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
-  } else {
-    nSize += (32 + 4 + 1 + 107 + 4);  // the 148 mentioned above
+static uint32_t GetInputsWeight(const std::vector<TxInputInfo>& inputs_info) {
+  uint32_t total = 0;
+  for (auto input_info : inputs_info) {
+    auto script = input_info.input.GetUnlockingScript();
+    auto script_size = script.IsEmpty() ? 0 : script.GetData().GetDataSize();
+    total += 164 + 4 * script_size + input_info.max_witness_length;
   }
 
-  nSize += extra_size;
+  return total;
+}
 
-  return output.GetValue().GetSatoshiValue() < nSize * fee_rate;
+std::tuple<TxOut, uint64_t, uint64_t> DlcManager::GetChangeOutputAndFees(
+    const PartyParams& params, uint64_t fee_rate, Amount option_premium,
+    Address option_dest) {
+  auto inputs_size = GetInputsWeight(params.inputs_info);
+  auto change_size = params.change_script_pubkey.GetData().GetDataSize();
+  double fund_weight =
+      (FUND_TX_BASE_WEIGHT / 2 + inputs_size + change_size * 4 + 36);
+  if (option_premium.GetSatoshiValue() > 0) {
+    if (option_dest.GetAddress() == "") {
+      throw CfdException(
+          CfdError::kCfdIllegalArgumentError,
+          "An destination address for the premium is required when the option "
+          "premium amount is greater than zero.");
+    }
+    fund_weight +=
+        36 + option_dest.GetLockingScript().GetData().GetDataSize() * 4;
+  }
+  auto fund_fee = ceil(fund_weight / 4) * fee_rate;
+  double cet_weight = (CET_BASE_WEIGHT / 2 +
+                       params.final_script_pubkey.GetData().GetDataSize() * 4);
+  auto cet_fee = ceil(cet_weight / 4) * fee_rate;
+  auto fund_out = params.collateral + fund_fee + cet_fee;
+  if (params.input_amount < (fund_out + option_premium)) {
+    throw CfdException(CfdError::kCfdIllegalArgumentError,
+                       "Input amount smaller than required for collateral, "
+                       "fees and option premium.");
+  }
+
+  TxOut change_output(params.input_amount - fund_out - option_premium,
+                      params.change_script_pubkey);
+
+  return std::make_tuple(change_output, fund_fee, cet_fee);
 }
 }  // namespace dlc
 }  // namespace cfd

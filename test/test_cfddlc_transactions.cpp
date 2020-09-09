@@ -2,13 +2,14 @@
 
 #include "cfd/cfd_transaction.h"
 #include "cfdcore/cfdcore_amount.h"
+#include "cfdcore/cfdcore_ecdsa_adaptor.h"
 #include "cfdcore/cfdcore_exception.h"
 #include "cfddlc/cfddlc_transactions.h"
-#include "cfddlc/cfddlc_util.h"
 #include "gtest/gtest.h"
 #include "wally_crypto.h"  // NOLINT
 
 using cfd::Amount;
+using cfd::core::AdaptorUtil;
 using cfd::core::Address;
 using cfd::core::ByteData;
 using cfd::core::ByteData256;
@@ -16,9 +17,13 @@ using cfd::core::CfdException;
 using cfd::core::CryptoUtil;
 using cfd::core::ExtPrivkey;
 using cfd::core::ExtPubkey;
+using cfd::core::HashUtil;
 using cfd::core::NetType;
 using cfd::core::Privkey;
 using cfd::core::Pubkey;
+using cfd::core::SchnorrPubkey;
+using cfd::core::SchnorrSignature;
+using cfd::core::SchnorrUtil;
 using cfd::core::ScriptUtil;
 using cfd::core::SigHashAlgorithm;
 using cfd::core::SigHashType;
@@ -29,29 +34,29 @@ using cfd::core::WitnessVersion;
 
 using cfd::dlc::DlcManager;
 using cfd::dlc::DlcOutcome;
-using cfd::dlc::DlcUtil;
+using cfd::dlc::PartyParams;
+using cfd::dlc::TxInputInfo;
 
+const std::string WIN_MESSAGE = "WIN";
+const std::string LOSE_MESSAGE = "LOSE";
+const ByteData256 WIN_MESSAGE_HASH = HashUtil::Sha256("WIN");
+const ByteData256 LOSE_MESSAGE_HASH = HashUtil::Sha256("LOSE");
+const std::vector<ByteData256> MESSAGES_HASH = {WIN_MESSAGE_HASH,
+                                                LOSE_MESSAGE_HASH};
 const Privkey ORACLE_PRIVKEY(
     "ded9a76a0a77399e1c2676324118a0386004633f16245ad30d172b15c1f9e2d3");
-const Pubkey ORACLE_PUBKEY = ORACLE_PRIVKEY.GeneratePubkey();
+const SchnorrPubkey ORACLE_PUBKEY = SchnorrPubkey::FromPrivkey(ORACLE_PRIVKEY);
 const Privkey ORACLE_K_VALUE(
     "be3cc8de25c50e25f69e2f88d151e3f63e99c3a44fed2bdd2e3ee70fe141c5c3");
-const std::vector<Pubkey> ORACLE_R_POINTS = {
-    DlcUtil::GetSchnorrPublicNonce(ORACLE_K_VALUE)};
-const ByteData ORACLE_SIGNATURE(
-    "8a820c2a94e3f85362c457b80cff914b13fbbd67df49df24181f3b916331a2e6");
+const SchnorrPubkey ORACLE_R_POINT = SchnorrPubkey::FromPrivkey(ORACLE_K_VALUE);
+const SchnorrSignature ORACLE_SIGNATURE = SchnorrUtil::SignWithNonce(
+    WIN_MESSAGE_HASH, ORACLE_PRIVKEY, ORACLE_K_VALUE);
 const Privkey LOCAL_FUND_PRIVKEY(
     "0000000000000000000000000000000000000000000000000000000000000001");
 const Pubkey LOCAL_FUND_PUBKEY = LOCAL_FUND_PRIVKEY.GeneratePubkey();
 const Privkey REMOTE_FUND_PRIVKEY(
     "0000000000000000000000000000000000000000000000000000000000000002");
 const Pubkey REMOTE_FUND_PUBKEY = REMOTE_FUND_PRIVKEY.GeneratePubkey();
-const Privkey LOCAL_SWEEP_PRIVKEY(
-    "0000000000000000000000000000000000000000000000000000000000000003");
-const Pubkey LOCAL_SWEEP_PUBKEY = LOCAL_SWEEP_PRIVKEY.GeneratePubkey();
-const Privkey REMOTE_SWEEP_PRIVKEY(
-    "0000000000000000000000000000000000000000000000000000000000000004");
-const Pubkey REMOTE_SWEEP_PUBKEY = REMOTE_SWEEP_PRIVKEY.GeneratePubkey();
 const Privkey LOCAL_INPUT_PRIVKEY(
     "0000000000000000000000000000000000000000000000000000000000000005");
 const Pubkey LOCAL_INPUT_PUBKEY = LOCAL_INPUT_PRIVKEY.GeneratePubkey();
@@ -63,17 +68,30 @@ const Amount REMOTE_INPUT_AMOUNT = Amount::CreateByCoinAmount(50);
 const Amount LOCAL_COLLATERAL_AMOUNT = Amount::CreateBySatoshiAmount(100000000);
 const Amount REMOTE_COLLATERAL_AMOUNT =
     Amount::CreateBySatoshiAmount(100000000);
-const Amount FUND_OUTPUT = Amount::CreateBySatoshiAmount(200000312);
+const Amount FUND_OUTPUT = Amount::CreateBySatoshiAmount(200000170);
 const Amount WIN_AMOUNT = Amount::CreateBySatoshiAmount(199900000);
 const Amount LOSE_AMOUNT = Amount::CreateBySatoshiAmount(100000);
-const std::vector<std::string> WIN_MESSAGES = {"WIN"};
-const std::vector<std::string> LOSE_MESSAGES = {"LOSE"};
+const std::vector<TxInputInfo> LOCAL_INPUTS_INFO = {TxInputInfo{
+    TxIn(
+        Txid(
+            "83266d6b22a9babf6ee469b88fd0d3a0c690525f7c903aff22ec8ee44214604f"),
+        0, 0),
+    108}};
+const std::vector<TxInputInfo> REMOTE_INPUTS_INFO = {TxInputInfo{
+    TxIn(
+        Txid(
+            "bc92a22f07ef23c53af343397874b59f5f8c0eb37753af1d1a159a2177d4bb98"),
+        0, 0),
+    108}};
 const std::vector<TxIn> LOCAL_INPUTS = {TxIn(
     Txid("83266d6b22a9babf6ee469b88fd0d3a0c690525f7c903aff22ec8ee44214604f"), 0,
     0)};
-const std::vector<TxIn> REMOTE_INPUTS = {TxIn(
-    Txid("bc92a22f07ef23c53af343397874b59f5f8c0eb37753af1d1a159a2177d4bb98"), 0,
-    0)};
+const std::vector<TxIn> REMOTE_INPUTS = {
+    TxIn(
+        Txid(
+            "bc92a22f07ef23c53af343397874b59f5f8c0eb37753af1d1a159a2177d4bb98"),
+        0, 0),
+};
 const Address LOCAL_CHANGE_ADDRESS(
     "bcrt1qlgmznucxpdkp5k3ktsct7eh6qrc4tju7ktjukn");
 const Address REMOTE_CHANGE_ADDRESS(
@@ -86,64 +104,72 @@ const Address REMOTE_FINAL_ADDRESS(
     NetType::kRegtest, WitnessVersion::kVersion0,
     Privkey("0000000000000000000000000000000000000000000000000000000000000008")
         .GeneratePubkey());
-const uint32_t MATURITY_TIME = 1579072156;
+
+const PartyParams LOCAL_PARAMS = {LOCAL_FUND_PUBKEY,
+                                  LOCAL_CHANGE_ADDRESS.GetLockingScript(),
+                                  LOCAL_FINAL_ADDRESS.GetLockingScript(),
+                                  LOCAL_INPUTS_INFO,
+                                  LOCAL_INPUT_AMOUNT,
+                                  LOCAL_COLLATERAL_AMOUNT};
+
+const PartyParams REMOTE_PARAMS = {REMOTE_FUND_PUBKEY,
+                                   REMOTE_CHANGE_ADDRESS.GetLockingScript(),
+                                   REMOTE_FINAL_ADDRESS.GetLockingScript(),
+                                   REMOTE_INPUTS_INFO,
+                                   REMOTE_INPUT_AMOUNT,
+                                   REMOTE_COLLATERAL_AMOUNT};
 const ByteData FUND_TX_HEX(
     "020000000001024f601442e48eec22ff3a907c5f5290c6a0d3d08fb869e46ebfbaa9226b6d"
     "26830000000000ffffffff98bbd477219a151a1daf5377b30e8c5f9fb574783943f33ac523"
-    "ef072fa292bc0000000000ffffffff0338c3eb0b000000002200209b984c7bae3efddc3a3f"
-    "0a20ff81bfe89ed1fe07ff13e562149ee654bed845dbe70f102401000000160014fa3629f3"
-    "060b6c1a5a365c30bf66fa00f155cb9ee70f10240100000016001465d4d622585baf5151de"
-    "860b1e7af58710f20da20247304402207108de1563ae311f8d4217e1c0c7463386c1a135be"
-    "6af88cbe8d89a3a08d65090220195a2b0140fb9ba83f20cf45ad6ea088bb0c6860c0d4995f"
-    "1cf1353739ca65a90121022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8"
-    "d569b240efe4024730440220048716eaee918aebcb1bfcfaf7564e78293a7bb0164d9a7844"
-    "e42fceb5ae393c022022817d033c9db19c5bdcadd49b7587a810b6fc2264158a59665aba8a"
-    "b298455b012103fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a146029"
+    "ef072fa292bc0000000000ffffffff03aac2eb0b000000002200209b984c7bae3efddc3a3f"
+    "0a20ff81bfe89ed1fe07ff13e562149ee654bed845db2d10102401000000160014fa3629f3"
+    "060b6c1a5a365c30bf66fa00f155cb9e2d1010240100000016001465d4d622585baf5151de"
+    "860b1e7af58710f20da20247304402206d7181ec4d126c5e6bbf5ae65ee0297610f4f0d28a"
+    "03ba6d782e651b136a6bd502200458622a92e2df148f90df85a2ebc402dd3aef43a10821c1"
+    "6e8739426ba808a00121022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8"
+    "d569b240efe402473044022007e59c38bc05ac886b52f29147af2dd9f5a2f15188b02c0fc7"
+    "7c2c42aa81bb7b022079da7f996b92ad4c5323c3e403c36dca967c7a3787cf7ac32b419f07"
+    "5cbfdd1d012103fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a146029"
     "755600000000");
 const ByteData FUND_TX_WITH_PREMIUM_HEX(
     "02000000024f601442e48eec22ff3a907c5f5290c6a0d3d08fb869e46ebfbaa9226b6d2683"
     "0000000000ffffffff98bbd477219a151a1daf5377b30e8c5f9fb574783943f33ac523ef07"
-    "2fa292bc0000000000ffffffff0438c3eb0b000000002200209b984c7bae3efddc3a3f0a20"
-    "ff81bfe89ed1fe07ff13e562149ee654bed845db37890e2401000000160014fa3629f3060b"
-    "6c1a5a365c30bf66fa00f155cb9ed70f10240100000016001465d4d622585baf5151de860b"
+    "2fa292bc0000000000ffffffff04aac2eb0b000000002200209b984c7bae3efddc3a3f0a20"
+    "ff81bfe89ed1fe07ff13e562149ee654bed845db6e890e2401000000160014fa3629f3060b"
+    "6c1a5a365c30bf66fa00f155cb9e2d1010240100000016001465d4d622585baf5151de860b"
     "1e7af58710f20da2a0860100000000001600143104041af39ddcb0976f9ab6522001f096af"
     "e2ce00000000");
 const Txid FUND_TX_ID(
-    "f4f1a5d41ce0133e4cb43a230a25fc75eed8a207b24865f715b8b9902d94b064");
+    "c371cfe829d31c1d18f6f638047d44e5e2617d659ebdd43b83b04da32e864692");
 
 const ByteData CET_HEX(
-    "0200000000010164b0942d90b9b815f76548b207a2d8ee75fc250a233ab44c3e13e01cd4a5"
-    "f1f40000000000feffffff02da3bea0b00000000220020a8df06fb6408f8502af80f09cd9a"
-    "9084603568c2338eda1a30b8e9bf62b679aea0860100000000001600149652d86bedf43ad2"
-    "64362e6e6eba6eb764508127040047304402204986d1ffb0ff379dbd42a7c1606822c135f9"
-    "e4b9f0af1309a9d383f9778b80d2022078861c7cdd24a59e50cf17753bcdfec1eed8708f21"
-    "588d1090c38b2766a098510147304402207b3460f1e7f5af3738467715f621774282eba8fa"
-    "1752c859338c095dd952764d022013b3ba4b2a3ec489715b2c10974c4395cb49e7ba7acae7"
-    "f0125549a53f68679d014752210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28"
-    "d959f2815b16f817982102c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac"
-    "09b95c709ee552ae9cba1e5e");
+    "02000000019246862ea34db0833bd4bd9e657d61e2e5447d0438f6f6181d1cd329e8cf71c3"
+    "0000000000ffffffff02603bea0b000000001600145dedfbf9ea599dd4e3ca6a80b333c472"
+    "fd0b3f69a0860100000000001600149652d86bedf43ad264362e6e6eba6eb7645081270000"
+    "0000");
 
-const Txid CET_ID(
-    "b76358e12874e7448a479ffcb178f9775ece2d83262ac2c17c381e5777b65cd6");
-const ByteData CLOSING_HEX(
-    "02000000000101d65cb677571e387cc1c22a26832dce5e77f978b1fc9f478a44e77428e158"
-    "63b70000000000ffffffff017837ea0b000000001600145dedfbf9ea599dd4e3ca6a80b333"
-    "c472fd0b3f690347304402207452592666a8465e86eb6e3766e534c79e6ce064a7648e9cce"
-    "519454cf8f6ea10220123c46a022c2bb1f03e68826b45cfa7c7af07223c0b46f1e7c6c90d6"
-    "b570fbc70101014c632102e07cca3429680d949f968ea585d3e04f5b536fc46a0caf901083"
-    "28fd663a86de670164b2752102e493dbf1c10d80f3581e4904930b1404cc6c13900ee07584"
-    "74fa94abe8c4cd1368ac00000000");
-uint32_t CSV_DELAY = 100;
+const ByteData CET_HEX_SIGNED(
+    "020000000001019246862ea34db0833bd4bd9e657d61e2e5447d0438f6f6181d1cd329e8cf"
+    "71c30000000000ffffffff02603bea0b000000001600145dedfbf9ea599dd4e3ca6a80b333"
+    "c472fd0b3f69a0860100000000001600149652d86bedf43ad264362e6e6eba6eb764508127"
+    "0400473044022006560a7c24ce8688620cb1002b822c187858fba43607b286f09b9c02443b"
+    "98f002207f8b1b6b120c0f4717f9f8c2cb739a400f94987dd48577ac4c4624c1477b969801"
+    "473044022036d971f3da54303facb5fbf8dc7e9eef452cd94723eb6dc52f7aeee454791a00"
+    "02204cf335114c47bae5e6dc2e00f566d1e37ec6fe25350fe797d48bff2573eeb548014752"
+    "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6"
+    "047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee552ae0000000"
+    "0");
+
 uint32_t REFUND_LOCKTIME = 100;
 
 const ByteData REFUND_HEX(
-    "0200000000010164b0942d90b9b815f76548b207a2d8ee75fc250a233ab44c3e13e01cd4a5"
-    "f1f40000000000feffffff0248e1f505000000001600145dedfbf9ea599dd4e3ca6a80b333"
-    "c472fd0b3f6948e1f505000000001600149652d86bedf43ad264362e6e6eba6eb764508127"
-    "04004730440220504d529dd7bdebe730f8d9e77630028b63a4a7fbfe7fd218dda8d60aef9b"
-    "c3560220539489f1d2c2e36fd3fe3985312f4b6c1981d26957da31eea71f29e348c23c0f01"
-    "47304402201f7a50bb8fcfdb4798afeb3bf53469acf349ff8a624af4263655bc71e02020e0"
-    "022014a7ac5db59af778d3120c6e0d705a5b4e7e171f2a62bcee94a4759ed6bd22d6014752"
+    "020000000001019246862ea34db0833bd4bd9e657d61e2e5447d0438f6f6181d1cd329e8cf"
+    "71c30000000000feffffff0200e1f505000000001600145dedfbf9ea599dd4e3ca6a80b333"
+    "c472fd0b3f6900e1f505000000001600149652d86bedf43ad264362e6e6eba6eb764508127"
+    "040047304402204d7d24af8714835eead1143e5f589675c9e3b68d911ed5cbaaaa207586da"
+    "c8e7022059a1febe7e12864a9ac59167510ffddfeed0f75920f611263e90b2068df52dbe01"
+    "4730440220325b227c84d65a29d6f932f149af7fd6849237bc9d5dec09771d68f75dacb85e"
+    "02202b8b0074f0804850ae4bdca21d139681d971117a669aae3385fb72acaa2feaee014752"
     "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6"
     "047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee552ae6400000"
     "0");
@@ -153,17 +179,17 @@ const Amount OPTION_PREMIUM = Amount::CreateBySatoshiAmount(100000);
 
 TEST(DlcManager, FundTransactionTest) {
   // Arrange
-  auto change = Amount::CreateBySatoshiAmount(4899999719);
+  auto change = Amount::CreateBySatoshiAmount(4899999789);
   TxOut local_change_output = TxOut(change, LOCAL_CHANGE_ADDRESS);
   TxOut remote_change_output = TxOut(change, REMOTE_CHANGE_ADDRESS);
 
   // Act
   auto fund_tx = DlcManager::CreateFundTransaction(
       LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
-      local_change_output, REMOTE_INPUTS, remote_change_output, 1);
+      local_change_output, REMOTE_INPUTS, remote_change_output);
   auto fund_tx2 = DlcManager::CreateFundTransaction(
       LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
-      local_change_output, REMOTE_INPUTS, remote_change_output, 1);
+      local_change_output, REMOTE_INPUTS, remote_change_output);
   auto local_utxo_txid = LOCAL_INPUTS[0].GetTxid();
   auto local_utxo_vout = LOCAL_INPUTS[0].GetVout();
   auto remote_utxo_txid = REMOTE_INPUTS[0].GetTxid();
@@ -212,65 +238,54 @@ TEST(DlcManager, FundTransactionTest) {
 TEST(DlcManager, CetTest) {
   // Arrange
   auto local_payout = Amount::CreateBySatoshiAmount(199900000);
-  auto closing_fee = Amount::CreateBySatoshiAmount(122);
   auto remote_payout = Amount::CreateBySatoshiAmount(100000);
+  TxOut local_output(local_payout, LOCAL_FINAL_ADDRESS);
+  TxOut remote_output(remote_payout, REMOTE_FINAL_ADDRESS);
   // Act
-  auto cet = DlcManager::CreateCet(
-      LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      REMOTE_FINAL_ADDRESS, ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES,
-      CSV_DELAY, WIN_AMOUNT + closing_fee, LOSE_AMOUNT, MATURITY_TIME, 1,
-      FUND_TX_ID, 0);
-  auto local_signature = DlcManager::GetRawCetSignature(
-      cet, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
-  auto remote_signature = DlcManager::GetRawCetSignature(
-      cet, REMOTE_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
-  DlcManager::AddSignaturesToCet(&cet, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-                                 {local_signature, remote_signature},
-                                 FUND_TX_ID, 0);
+  auto cet =
+      DlcManager::CreateCet(local_output, remote_output, FUND_TX_ID, 0, 0);
+
+  auto fund_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
+                                                           REMOTE_FUND_PUBKEY);
+  auto local_adaptor_pair = DlcManager::CreateCetAdaptorSignature(
+      cet, ORACLE_PUBKEY, ORACLE_R_POINT, LOCAL_FUND_PRIVKEY, fund_script,
+      FUND_OUTPUT, WIN_MESSAGE_HASH);
+  auto remote_adaptor_pair = DlcManager::CreateCetAdaptorSignature(
+      cet, ORACLE_PUBKEY, ORACLE_R_POINT, REMOTE_FUND_PRIVKEY, fund_script,
+      FUND_OUTPUT, WIN_MESSAGE_HASH);
 
   // Assert
   EXPECT_EQ(FUND_TX_ID.GetHex(),
             cet.GetTransaction().GetTxIn(0).GetTxid().GetHex());
   EXPECT_EQ(0, cet.GetTransaction().GetTxIn(0).GetVout());
-  EXPECT_EQ(local_payout + closing_fee,
-            cet.GetTransaction().GetTxOut(0).GetValue());
+  EXPECT_EQ(local_payout, cet.GetTransaction().GetTxOut(0).GetValue());
   EXPECT_TRUE(
-      cet.GetTransaction().GetTxOut(0).GetLockingScript().IsP2wshScript());
+      cet.GetTransaction().GetTxOut(0).GetLockingScript().IsP2wpkhScript());
   EXPECT_EQ(remote_payout, cet.GetTransaction().GetTxOut(1).GetValue());
   EXPECT_TRUE(
       cet.GetTransaction().GetTxOut(1).GetLockingScript().IsP2wpkhScript());
   EXPECT_EQ(CET_HEX.GetHex(), cet.GetHex());
-  EXPECT_TRUE(DlcManager::VerifyCetSignature(
-      cet, local_signature, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT,
-      FUND_TX_ID, 0, false));
-  EXPECT_TRUE(DlcManager::VerifyCetSignature(
-      cet, remote_signature, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT,
-      FUND_TX_ID, 0, true));
-}
+  EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
+      local_adaptor_pair, cet, LOCAL_FUND_PUBKEY, ORACLE_PUBKEY, ORACLE_R_POINT,
+      fund_script, FUND_OUTPUT, WIN_MESSAGE_HASH));
+  EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
+      remote_adaptor_pair, cet, REMOTE_FUND_PUBKEY, ORACLE_PUBKEY,
+      ORACLE_R_POINT, fund_script, FUND_OUTPUT, WIN_MESSAGE_HASH));
 
-TEST(DlcManager, CetBadMaturityTest) {
-  // Arrange
-  auto closing_fee = Amount::CreateBySatoshiAmount(122);
-
-  // Act/Assert
-
-  ASSERT_THROW(DlcManager::CreateCet(
-                   LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-                   REMOTE_FINAL_ADDRESS, ORACLE_PUBKEY, ORACLE_R_POINTS,
-                   WIN_MESSAGES, CSV_DELAY, WIN_AMOUNT + closing_fee,
-                   LOSE_AMOUNT, 50, 1, FUND_TX_ID, 0),
-               CfdException);
+  DlcManager::SignCet(&cet, local_adaptor_pair.signature, ORACLE_SIGNATURE,
+                      REMOTE_FUND_PRIVKEY, fund_script, FUND_TX_ID, 0,
+                      FUND_OUTPUT);
+  EXPECT_EQ(cet.GetHex(), CET_HEX_SIGNED.GetHex());
 }
 
 TEST(DlcManager, RefundTransactionTest) {
   // Arrange
   // Act
   auto refund_tx = DlcManager::CreateRefundTransaction(
-      LOCAL_FINAL_ADDRESS, REMOTE_FINAL_ADDRESS,
-      Amount::CreateBySatoshiAmount(100000072),
-      Amount::CreateBySatoshiAmount(100000072), 100, FUND_TX_ID, 0);
+      LOCAL_FINAL_ADDRESS.GetLockingScript(),
+      REMOTE_FINAL_ADDRESS.GetLockingScript(),
+      Amount::CreateBySatoshiAmount(100000000),
+      Amount::CreateBySatoshiAmount(100000000), 100, FUND_TX_ID, 0);
 
   auto local_signature = DlcManager::GetRawRefundTxSignature(
       refund_tx, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
@@ -292,112 +307,14 @@ TEST(DlcManager, RefundTransactionTest) {
       FUND_OUTPUT, true, FUND_TX_ID, 0));
 }
 
-TEST(DlcManager, ClosingTransactionTest) {
-  // Arrange
-  auto input_amount = Amount::CreateBySatoshiAmount(199900122);
-  auto output_amount = Amount::CreateBySatoshiAmount(199899000);
-  // Act
-  auto closing_tx = DlcManager::CreateClosingTransaction(
-      LOCAL_FINAL_ADDRESS, output_amount, CET_ID, 0);
-
-  DlcManager::SignClosingTransactionInput(
-      &closing_tx, LOCAL_FUND_PRIVKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY,
-      {ORACLE_SIGNATURE}, input_amount, CET_ID, 0);
-
-  auto local_closing_signature = DlcManager::GetRawClosingTransactionSignature(
-      closing_tx, LOCAL_FUND_PRIVKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY,
-      {ORACLE_SIGNATURE}, input_amount, CET_ID, 0);
-  auto oracle_message_key =
-      DlcUtil::GetCommittedKey(ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES);
-  bool is_signature_valid = closing_tx.VerifyInputSignature(
-      local_closing_signature,
-      DlcUtil::GetCombinedKey(ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES,
-                              LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY),
-      CET_ID, 0,
-      DlcManager::CreateCetRedeemScript(
-          LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-          ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY),
-      SigHashType(), input_amount, WitnessVersion::kVersion0);
-  // Assert
-  ASSERT_EQ(output_amount, closing_tx.GetTransaction().GetTxOut(0).GetValue());
-  ASSERT_EQ(CET_ID.GetHex(),
-            closing_tx.GetTransaction().GetTxIn(0).GetTxid().GetHex());
-  ASSERT_EQ(0, closing_tx.GetTransaction().GetTxIn(0).GetVout());
-  ASSERT_EQ(CLOSING_HEX.GetHex(), closing_tx.GetHex());
-  ASSERT_TRUE(is_signature_valid);
-}
-
-TEST(DlcManager, PenaltyTransactionTest) {
-  // Arrange
-  auto input_amount = Amount::CreateBySatoshiAmount(199900122);
-  auto output_amount = Amount::CreateBySatoshiAmount(199899000);
-  // Act
-  auto penalty_tx = DlcManager::CreatePenaltyTransaction(
-      REMOTE_FINAL_ADDRESS, output_amount, CET_ID, 0);
-  DlcManager::SignPenaltyTransactionInput(
-      &penalty_tx, REMOTE_SWEEP_PRIVKEY, LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY, input_amount,
-      CET_ID, 0);
-
-  auto remote_penalty_signature = DlcManager::GetRawPenaltyTransactionSignature(
-      penalty_tx, REMOTE_SWEEP_PRIVKEY, LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY,
-      ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY, input_amount,
-      CET_ID, 0);
-  bool is_signature_valid = penalty_tx.VerifyInputSignature(
-      remote_penalty_signature, REMOTE_SWEEP_PUBKEY, CET_ID, 0,
-      DlcManager::CreateCetRedeemScript(
-          LOCAL_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-          ORACLE_PUBKEY, ORACLE_R_POINTS, WIN_MESSAGES, CSV_DELAY),
-      SigHashType(), input_amount, WitnessVersion::kVersion0);
-
-  // Assert
-  ASSERT_EQ(output_amount, penalty_tx.GetTransaction().GetTxOut(0).GetValue());
-  ASSERT_EQ(CET_ID.GetHex(),
-            penalty_tx.GetTransaction().GetTxIn(0).GetTxid().GetHex());
-  ASSERT_EQ(0, penalty_tx.GetTransaction().GetTxIn(0).GetVout());
-  ASSERT_TRUE(is_signature_valid);
-}
-
-TEST(DlcManager, MutualClosingTransactionTest) {
-  // Arrange
-  // Act
-  auto mutual_closing_tx = DlcManager::CreateMutualClosingTransaction(
-      LOCAL_FINAL_ADDRESS, REMOTE_FINAL_ADDRESS,
-      Amount::CreateBySatoshiAmount(100000072),
-      Amount::CreateBySatoshiAmount(100000072), 1, FUND_TX_ID, 0);
-  auto local_signature = DlcManager::GetRawMutualClosingTxSignature(
-      mutual_closing_tx, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0);
-  auto remote_signature = DlcManager::GetRawMutualClosingTxSignature(
-      mutual_closing_tx, REMOTE_FUND_PRIVKEY, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0);
-  DlcManager::AddSignaturesToMutualClosingTx(
-      &mutual_closing_tx, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      {local_signature, remote_signature}, FUND_TX_ID, 0);
-
-  EXPECT_TRUE(DlcManager::VerifyMutualClosingTxSignature(
-      mutual_closing_tx, local_signature, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0, false));
-  EXPECT_TRUE(DlcManager::VerifyMutualClosingTxSignature(
-      mutual_closing_tx, remote_signature, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, true));
-}
-
 TEST(DlcManager, CreateDlcTransactions) {
   // Arrange
-  std::vector<DlcOutcome> outcomes = {{WIN_MESSAGES, WIN_AMOUNT, LOSE_AMOUNT},
-                                      {LOSE_MESSAGES, LOSE_AMOUNT, WIN_AMOUNT}};
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
 
   // Act
   auto dlc_transactions = DlcManager::CreateDlcTransactions(
-      outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
-      REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
-      REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, CSV_DELAY, REFUND_LOCKTIME,
-      LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME);
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1);
   auto fund_tx = dlc_transactions.fund_transaction;
   DlcManager::SignFundTransactionInput(&fund_tx, LOCAL_INPUT_PRIVKEY,
                                        LOCAL_INPUTS[0].GetTxid(), 0,
@@ -405,6 +322,7 @@ TEST(DlcManager, CreateDlcTransactions) {
   DlcManager::SignFundTransactionInput(&fund_tx, REMOTE_INPUT_PRIVKEY,
                                        REMOTE_INPUTS[0].GetTxid(), 0,
                                        REMOTE_INPUT_AMOUNT);
+
   auto local_fund_signature =
       DlcManager::GetRawFundingTransactionInputSignature(
           fund_tx, LOCAL_INPUT_PRIVKEY, LOCAL_INPUTS[0].GetTxid(), 0,
@@ -425,133 +343,107 @@ TEST(DlcManager, CreateDlcTransactions) {
 
   auto refund_tx = dlc_transactions.refund_transaction;
 
+  auto fund_tx_id = fund_tx.GetTransaction().GetTxid();
+
   auto local_refund_signature = DlcManager::GetRawRefundTxSignature(
       refund_tx, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
+      FUND_OUTPUT, fund_tx_id, 0);
 
   auto remote_refund_signature = DlcManager::GetRawRefundTxSignature(
       refund_tx, REMOTE_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
+      FUND_OUTPUT, fund_tx_id, 0);
 
   DlcManager::AddSignaturesToRefundTx(
       &refund_tx, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      {local_refund_signature, remote_refund_signature}, FUND_TX_ID, 0);
+      {local_refund_signature, remote_refund_signature}, fund_tx_id, 0);
 
   bool is_local_refund_signature_valid = DlcManager::VerifyRefundTxSignature(
       refund_tx, local_refund_signature, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, false, FUND_TX_ID);
+      FUND_OUTPUT, false, fund_tx_id);
 
   bool is_remote_refund_signature_valid = DlcManager::VerifyRefundTxSignature(
       refund_tx, remote_refund_signature, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, true, FUND_TX_ID);
+      FUND_OUTPUT, true, fund_tx_id);
 
-  auto local_cets = dlc_transactions.local_cets;
-  auto remote_cets = dlc_transactions.remote_cets;
-  auto nb_cet = local_cets.size();
+  auto cets = dlc_transactions.cets;
+  auto nb_cet = cets.size();
 
-  auto local_cets_local_signatures = DlcManager::GetRawCetSignatures(
-      local_cets, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
-
-  auto local_cets_remote_signatures = DlcManager::GetRawCetSignatures(
-      local_cets, REMOTE_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
-
-  auto remote_cets_local_signatures = DlcManager::GetRawCetSignatures(
-      remote_cets, LOCAL_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
-
-  auto remote_cets_remote_signatures = DlcManager::GetRawCetSignatures(
-      remote_cets, REMOTE_FUND_PRIVKEY, LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-      FUND_OUTPUT, FUND_TX_ID, 0);
+  auto fund_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
+                                                           REMOTE_FUND_PUBKEY);
 
   bool all_valid_cet_signatures = true;
   for (size_t i = 0; i < nb_cet; i++) {
-    DlcManager::AddSignaturesToCet(
-        &local_cets[i], LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-        {local_cets_local_signatures[i], local_cets_remote_signatures[i]},
-        FUND_TX_ID, 0);
-    DlcManager::AddSignaturesToCet(
-        &remote_cets[i], LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY,
-        {remote_cets_local_signatures[i], remote_cets_remote_signatures[i]},
-        FUND_TX_ID, 0);
-    all_valid_cet_signatures &= DlcManager::VerifyCetSignature(
-        local_cets[i], local_cets_local_signatures[i], LOCAL_FUND_PUBKEY,
-        REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, false);
-    all_valid_cet_signatures &= DlcManager::VerifyCetSignature(
-        local_cets[i], local_cets_remote_signatures[i], LOCAL_FUND_PUBKEY,
-        REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, true);
-    all_valid_cet_signatures &= DlcManager::VerifyCetSignature(
-        remote_cets[i], remote_cets_local_signatures[i], LOCAL_FUND_PUBKEY,
-        REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, false);
-    all_valid_cet_signatures &= DlcManager::VerifyCetSignature(
-        remote_cets[i], remote_cets_remote_signatures[i], LOCAL_FUND_PUBKEY,
-        REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, true);
+    auto local_cet_adaptor_pair = DlcManager::CreateCetAdaptorSignature(
+        cets[i], ORACLE_PUBKEY, ORACLE_R_POINT, LOCAL_FUND_PRIVKEY, fund_script,
+        FUND_OUTPUT, MESSAGES_HASH[i]);
+    all_valid_cet_signatures &= DlcManager::VerifyCetAdaptorSignature(
+        local_cet_adaptor_pair, cets[i], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+        ORACLE_R_POINT, fund_script, FUND_OUTPUT, MESSAGES_HASH[i]);
+    auto remote_cet_adaptor_pair = DlcManager::CreateCetAdaptorSignature(
+        cets[i], ORACLE_PUBKEY, ORACLE_R_POINT, LOCAL_FUND_PRIVKEY, fund_script,
+        FUND_OUTPUT, MESSAGES_HASH[i]);
+    all_valid_cet_signatures &= DlcManager::VerifyCetAdaptorSignature(
+        remote_cet_adaptor_pair, cets[i], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+        ORACLE_R_POINT, fund_script, FUND_OUTPUT, MESSAGES_HASH[i]);
   }
 
-  bool all_valid_cet_sig_batch = DlcManager::VerifyCetSignatures(
-      local_cets, local_cets_local_signatures, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, false);
-  all_valid_cet_sig_batch &= DlcManager::VerifyCetSignatures(
-      local_cets, local_cets_remote_signatures, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, true);
-  all_valid_cet_sig_batch = DlcManager::VerifyCetSignatures(
-      remote_cets, remote_cets_local_signatures, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, false);
-  all_valid_cet_sig_batch &= DlcManager::VerifyCetSignatures(
-      remote_cets, remote_cets_remote_signatures, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, FUND_OUTPUT, FUND_TX_ID, 0, true);
+  auto local_cet_adaptor_pairs = DlcManager::CreateCetAdaptorSignatures(
+      cets, ORACLE_PUBKEY, ORACLE_R_POINT, LOCAL_FUND_PRIVKEY, fund_script,
+      FUND_OUTPUT, MESSAGES_HASH);
 
+  bool all_valid_cet_pair_batch = DlcManager::VerifyCetAdaptorSignatures(
+      cets, local_cet_adaptor_pairs, MESSAGES_HASH, LOCAL_FUND_PUBKEY,
+      ORACLE_PUBKEY, ORACLE_R_POINT, fund_script, FUND_OUTPUT);
+  auto remote_cet_adaptor_pairs = DlcManager::CreateCetAdaptorSignatures(
+      cets, ORACLE_PUBKEY, ORACLE_R_POINT, LOCAL_FUND_PRIVKEY, fund_script,
+      FUND_OUTPUT, MESSAGES_HASH);
+
+  all_valid_cet_pair_batch &= DlcManager::VerifyCetAdaptorSignatures(
+      cets, remote_cet_adaptor_pairs, MESSAGES_HASH, LOCAL_FUND_PUBKEY,
+      ORACLE_PUBKEY, ORACLE_R_POINT, fund_script, FUND_OUTPUT);
+
+  EXPECT_EQ(dlc_transactions.cets.size(), outcomes.size());
   EXPECT_EQ(FUND_TX_HEX.GetHex(), fund_tx.GetHex());
   EXPECT_TRUE(is_local_fund_signature_valid);
   EXPECT_TRUE(is_remote_fund_signature_valid);
   EXPECT_EQ(REFUND_HEX.GetHex(), refund_tx.GetHex());
   EXPECT_TRUE(is_local_refund_signature_valid);
   EXPECT_TRUE(is_remote_refund_signature_valid);
-  EXPECT_EQ(CET_HEX.GetHex(), local_cets[0].GetHex());
   EXPECT_TRUE(all_valid_cet_signatures);
-  EXPECT_TRUE(all_valid_cet_sig_batch);
+  EXPECT_TRUE(all_valid_cet_pair_batch);
 }
 
 TEST(DlcManager, CreateCetTransactionNotEnoughInputTest) {
   // Arrange
-  std::vector<DlcOutcome> outcomes = {{WIN_MESSAGES, WIN_AMOUNT, LOSE_AMOUNT},
-                                      {LOSE_MESSAGES, LOSE_AMOUNT, WIN_AMOUNT}};
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
 
+  auto local_params_short = LOCAL_PARAMS;
+  local_params_short.input_amount = Amount::CreateBySatoshiAmount(1000);
+  auto remote_params_short = LOCAL_PARAMS;
+  remote_params_short.input_amount = Amount::CreateBySatoshiAmount(1000);
   // Act/Assert
   ASSERT_THROW(
-      DlcManager::CreateDlcTransactions(
-          outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
-          REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-          LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
-          REMOTE_FINAL_ADDRESS, Amount::CreateBySatoshiAmount(1000),
-          LOCAL_COLLATERAL_AMOUNT, REMOTE_INPUT_AMOUNT,
-          REMOTE_COLLATERAL_AMOUNT, REFUND_LOCKTIME, CSV_DELAY, LOCAL_INPUTS,
-          REMOTE_INPUTS, 1, MATURITY_TIME),
+      auto dlc_transactions = DlcManager::CreateDlcTransactions(
+          outcomes, local_params_short, REMOTE_PARAMS, REFUND_LOCKTIME, 1),
       CfdException);
   ASSERT_THROW(
-      DlcManager::CreateDlcTransactions(
-          outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
-          REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-          LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
-          REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
-          Amount::CreateBySatoshiAmount(1000), REMOTE_COLLATERAL_AMOUNT,
-          REFUND_LOCKTIME, CSV_DELAY, LOCAL_INPUTS, REMOTE_INPUTS, 1,
-          MATURITY_TIME),
+      auto dlc_transactions = DlcManager::CreateDlcTransactions(
+          outcomes, remote_params_short, REMOTE_PARAMS, REFUND_LOCKTIME, 1),
       CfdException);
 }
 
 TEST(DlcManager, FundTransactionWithPremiumTest) {
   // Arrange
-  auto local_change = Amount::CreateBySatoshiAmount(4899899703);
-  auto remote_change = Amount::CreateBySatoshiAmount(4899999703);
+  auto local_change = Amount::CreateBySatoshiAmount(4899899758);
+  auto remote_change = Amount::CreateBySatoshiAmount(4899999789);
   TxOut local_change_output = TxOut(local_change, LOCAL_CHANGE_ADDRESS);
   TxOut remote_change_output = TxOut(remote_change, REMOTE_CHANGE_ADDRESS);
 
   // Act
   auto fund_tx = DlcManager::CreateFundTransaction(
       LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
-      local_change_output, REMOTE_INPUTS, remote_change_output, 1, PREMIUM_DEST,
+      local_change_output, REMOTE_INPUTS, remote_change_output, PREMIUM_DEST,
       OPTION_PREMIUM);
 
   EXPECT_EQ(FUND_TX_WITH_PREMIUM_HEX.GetHex(), fund_tx.GetHex());
@@ -564,20 +456,16 @@ TEST(DlcManager, FundTransactionWithPremiumTest) {
 
 TEST(DlcManager, CreateDlcTransactionsWithPremium) {
   // Arrange
-  std::vector<DlcOutcome> outcomes = {{WIN_MESSAGES, WIN_AMOUNT, LOSE_AMOUNT},
-                                      {LOSE_MESSAGES, LOSE_AMOUNT, WIN_AMOUNT}};
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
 
   // Act
   auto dlc_transactions = DlcManager::CreateDlcTransactions(
-      outcomes, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PUBKEY,
-      REMOTE_FUND_PUBKEY, LOCAL_SWEEP_PUBKEY, REMOTE_SWEEP_PUBKEY,
-      LOCAL_CHANGE_ADDRESS, REMOTE_CHANGE_ADDRESS, LOCAL_FINAL_ADDRESS,
-      REMOTE_FINAL_ADDRESS, LOCAL_INPUT_AMOUNT, LOCAL_COLLATERAL_AMOUNT,
-      REMOTE_INPUT_AMOUNT, REMOTE_COLLATERAL_AMOUNT, CSV_DELAY, REFUND_LOCKTIME,
-      LOCAL_INPUTS, REMOTE_INPUTS, 1, MATURITY_TIME, PREMIUM_DEST,
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
       OPTION_PREMIUM);
   auto fund_tx = dlc_transactions.fund_transaction;
 
+  // Assert
   EXPECT_EQ(FUND_TX_WITH_PREMIUM_HEX.GetHex(), fund_tx.GetHex());
   EXPECT_EQ(4, fund_tx.GetTransaction().GetTxOutCount());
   EXPECT_GT((LOCAL_INPUT_AMOUNT - LOCAL_COLLATERAL_AMOUNT - OPTION_PREMIUM)
@@ -585,4 +473,48 @@ TEST(DlcManager, CreateDlcTransactionsWithPremium) {
             fund_tx.GetTransaction().GetTxOut(1).GetValue().GetSatoshiValue());
   EXPECT_EQ(OPTION_PREMIUM.GetSatoshiValue(),
             fund_tx.GetTransaction().GetTxOut(3).GetValue().GetSatoshiValue());
+}
+
+TEST(DlcManager, CreateDlcTransactionsWithPremiumEmptyDestAddressFails) {
+  // Arrange
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
+
+  // Act/Assert
+  EXPECT_THROW(DlcManager::CreateDlcTransactions(outcomes, LOCAL_PARAMS,
+                                                 REMOTE_PARAMS, REFUND_LOCKTIME,
+                                                 1, Address(), OPTION_PREMIUM),
+               CfdException);
+}
+
+TEST(DlcManager, AdaptorSigTest) {
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
+  auto dlc_transactions = DlcManager::CreateDlcTransactions(
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
+      OPTION_PREMIUM);
+  auto fund_transaction = dlc_transactions.fund_transaction;
+  auto cets = dlc_transactions.cets;
+  auto cet0 = cets[0];
+  auto lock_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
+                                                           REMOTE_FUND_PUBKEY);
+
+  auto fund_amount = fund_transaction.GetTransaction().GetTxOut(0).GetValue();
+  auto fund_txid = fund_transaction.GetTransaction().GetTxid();
+
+  auto adaptor_pairs = DlcManager::CreateCetAdaptorSignatures(
+      cets, ORACLE_PUBKEY, ORACLE_R_POINT, LOCAL_FUND_PRIVKEY, lock_script,
+      fund_amount, {WIN_MESSAGE_HASH, LOSE_MESSAGE_HASH});
+
+  EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
+      adaptor_pairs[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+      ORACLE_R_POINT, lock_script, fund_amount, LOSE_MESSAGE_HASH));
+
+  auto adapted_sig = AdaptorUtil::Adapt(adaptor_pairs[0].signature,
+                                        ORACLE_SIGNATURE.GetPrivkey());
+
+  auto is_valid = cet0.VerifyInputSignature(
+      adapted_sig, LOCAL_FUND_PUBKEY, fund_txid, 0, lock_script, SigHashType(),
+      fund_amount, WitnessVersion::kVersion0);
+  EXPECT_TRUE(is_valid);
 }
