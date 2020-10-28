@@ -191,11 +191,12 @@ bool DlcManager::VerifyFundTxSignature(const TransactionController& fund_tx,
 
 AdaptorPair DlcManager::CreateCetAdaptorSignature(
     const TransactionController& cet, const SchnorrPubkey& oracle_pubkey,
-    const SchnorrPubkey& oracle_r_value, const Privkey& funding_sk,
-    const Script& funding_script_pubkey, const Amount& total_collateral,
-    const ByteData256& msg) {
+    const std::vector<SchnorrPubkey>& oracle_r_values,
+    const Privkey& funding_sk, const Script& funding_script_pubkey,
+    const Amount& total_collateral, const std::vector<ByteData256>& msgs) {
   auto adaptor_point =
-      SchnorrUtil::ComputeSigPoint(msg, oracle_r_value, oracle_pubkey);
+      ComputeAdaptorPoint(msgs, oracle_r_values, oracle_pubkey);
+
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
       WitnessVersion::kVersion0);
@@ -204,9 +205,10 @@ AdaptorPair DlcManager::CreateCetAdaptorSignature(
 
 std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
-    const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
-    const Privkey& funding_sk, const Script& funding_script_pubkey,
-    const Amount& total_collateral, const std::vector<ByteData256>& msgs) {
+    const SchnorrPubkey& oracle_pubkey,
+    const std::vector<SchnorrPubkey>& oracle_r_value, const Privkey& funding_sk,
+    const Script& funding_script_pubkey, const Amount& total_collateral,
+    const std::vector<std::vector<ByteData256>>& msgs) {
   size_t nb = cets.size();
   if (nb != msgs.size()) {
     throw CfdException(CfdError::kCfdIllegalArgumentError,
@@ -226,10 +228,11 @@ std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
 bool DlcManager::VerifyCetAdaptorSignature(
     const AdaptorPair& adaptor_pair, const TransactionController& cet,
     const Pubkey& pubkey, const SchnorrPubkey& oracle_pubkey,
-    const SchnorrPubkey& oracle_r_value, const Script& funding_script_pubkey,
-    const Amount& total_collateral, const ByteData256& msg) {
+    const std::vector<SchnorrPubkey>& oracle_r_values,
+    const Script& funding_script_pubkey, const Amount& total_collateral,
+    const std::vector<ByteData256>& msgs) {
   auto adaptor_point =
-      SchnorrUtil::ComputeSigPoint(msg, oracle_r_value, oracle_pubkey);
+      ComputeAdaptorPoint(msgs, oracle_r_values, oracle_pubkey);
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
       WitnessVersion::kVersion0);
@@ -240,8 +243,9 @@ bool DlcManager::VerifyCetAdaptorSignature(
 bool DlcManager::VerifyCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
     const std::vector<AdaptorPair>& signature_and_proofs,
-    const std::vector<ByteData256>& msgs, const Pubkey& pubkey,
-    const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+    const std::vector<std::vector<ByteData256>>& msgs, const Pubkey& pubkey,
+    const SchnorrPubkey& oracle_pubkey,
+    const std::vector<SchnorrPubkey>& oracle_r_values,
     const Script& funding_script_pubkey, const Amount& total_collateral) {
   auto nb = cets.size();
   if (nb != signature_and_proofs.size() || nb != msgs.size()) {
@@ -254,8 +258,8 @@ bool DlcManager::VerifyCetAdaptorSignatures(
 
   for (size_t i = 0; i < nb && all_valid; i++) {
     all_valid &= VerifyCetAdaptorSignature(
-        signature_and_proofs[i], cets[i], pubkey, oracle_pubkey, oracle_r_value,
-        funding_script_pubkey, total_collateral, msgs[i]);
+        signature_and_proofs[i], cets[i], pubkey, oracle_pubkey,
+        oracle_r_values, funding_script_pubkey, total_collateral, msgs[i]);
   }
 
   return all_valid;
@@ -263,12 +267,23 @@ bool DlcManager::VerifyCetAdaptorSignatures(
 
 void DlcManager::SignCet(TransactionController* cet,
                          const AdaptorSignature& adaptor_sig,
-                         const SchnorrSignature& oracle_signature,
+                         const std::vector<SchnorrSignature>& oracle_signatures,
                          const Privkey funding_sk,
                          const Script& funding_script_pubkey,
                          const Txid& fund_tx_id, uint32_t fund_vout,
                          const Amount& fund_amount) {
-  auto adaptor_secret = oracle_signature.GetPrivkey();
+  if (oracle_signatures.size() < 1) {
+    throw CfdException(CfdError::kCfdIllegalArgumentError,
+                       "No oracle signature provided.");
+  }
+
+  auto adaptor_secret = oracle_signatures[0].GetPrivkey();
+
+  for (size_t i = 1; i < oracle_signatures.size(); i++) {
+    adaptor_secret = adaptor_secret.CreateTweakAdd(
+        ByteData256(oracle_signatures[i].GetPrivkey().GetData()));
+  }
+
   auto adapted_sig = AdaptorUtil::Adapt(adaptor_sig, adaptor_secret);
   auto sig_hash = cet->GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), fund_amount,
@@ -518,6 +533,24 @@ std::tuple<TxOut, uint64_t, uint64_t> DlcManager::GetChangeOutputAndFees(
                       params.change_script_pubkey);
 
   return std::make_tuple(change_output, fund_fee, cet_fee);
+}
+
+Pubkey DlcManager::ComputeAdaptorPoint(
+    const std::vector<ByteData256>& msgs,
+    const std::vector<SchnorrPubkey>& r_values, const SchnorrPubkey& pubkey) {
+  if (r_values.size() != msgs.size()) {
+    throw CfdException(CfdError::kCfdIllegalArgumentError,
+                       "Number of r values and messages must match.");
+  }
+
+  std::vector<Pubkey> sigpoints;
+
+  for (size_t i = 0; i < r_values.size(); i++) {
+    sigpoints.push_back(
+        SchnorrUtil::ComputeSigPoint(msgs[i], r_values[i], pubkey));
+  }
+
+  return sigpoints.size() > 1 ? Pubkey::CombinePubkey(sigpoints) : sigpoints[0];
 }
 }  // namespace dlc
 }  // namespace cfd
