@@ -261,26 +261,27 @@ class CFD_DLC_EXPORT DlcManager {
    *
    * @param cet the CET to generate the signature for.
    * @param oracle_pubkey the pubkey of the oracle for the associated event.
-   * @param oracle_r_value the r value that the oracle will use for the
+   * @param oracle_r_values the set of r values that the oracle will use for the
    * associated event.
    * @param funding_sk the private key to generate the signature with.
    * @param funding_script_pubkey the script pubkey of the fund output.
    * @param fund_output_amount the value of the fund output.
-   * @param msg the message for the outcome corresponding to the given CET.
+   * @param msgs the set of messages for the outcome corresponding to the given
+   * CET.
    * @return AdaptorPair an adaptor signature and its dleq proof.
    */
   static AdaptorPair CreateCetAdaptorSignature(
       const TransactionController& cet, const SchnorrPubkey& oracle_pubkey,
-      const SchnorrPubkey& oracle_r_value, const Privkey& funding_sk,
-      const Script& funding_script_pubkey, const Amount& fund_output_amount,
-      const ByteData256& msg);
+      const std::vector<SchnorrPubkey>& oracle_r_values,
+      const Privkey& funding_sk, const Script& funding_script_pubkey,
+      const Amount& fund_output_amount, const std::vector<ByteData256>& msgs);
 
   /**
    * @brief Create a Cet Adaptor Signatures object
    *
    * @param cets the cets to generate adaptor signatures for.
    * @param oracle_pubkey the pubkey of the oracle for the associated event.
-   * @param oracle_r_value the r value that the oracle will use for the
+   * @param oracle_r_values the set of r value that the oracle will use for the
    * associated event.
    * @param funding_sk the private key to generate the signature with.
    * @param funding_script_pubkey the script pubkey of the fund output.
@@ -291,9 +292,11 @@ class CFD_DLC_EXPORT DlcManager {
    */
   static std::vector<AdaptorPair> CreateCetAdaptorSignatures(
       const std::vector<TransactionController>& cets,
-      const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+      const SchnorrPubkey& oracle_pubkey,
+      const std::vector<SchnorrPubkey>& oracle_r_values,
       const Privkey& funding_sk, const Script& funding_script_pubkey,
-      const Amount& fund_output_amount, const std::vector<ByteData256>& msgs);
+      const Amount& fund_output_amount,
+      const std::vector<std::vector<ByteData256>>& msgs);
 
   /**
    * @brief Verify that a signature for a fund transaction is valid.
@@ -321,19 +324,21 @@ class CFD_DLC_EXPORT DlcManager {
    * @param pubkey the public key to verify the signature against.
    * @param oracle_pubkey the public key of the oracle used for the associated
    * event.
-   * @param oracle_r_value the r_value that the oracle will used to create a
-   * signature over the outcome of the associated event.
+   * @param oracle_r_values the r_values that the oracle will used to create
+   * signatures over the outcome of the associated event.
    * @param funding_script_pubkey the script pubkey of the fund output.
    * @param fund_output_amount the value of the fund output.
-   * @param msg the hash of the event outcome for the given CET.
+   * @param msgs the hashes of the value representing the event outcome for the
+   * given CET.
    * @return true
    * @return false
    */
   static bool VerifyCetAdaptorSignature(
       const AdaptorPair& adaptor_pair, const TransactionController& cet,
       const Pubkey& pubkey, const SchnorrPubkey& oracle_pubkey,
-      const SchnorrPubkey& oracle_r_value, const Script& funding_script_pubkey,
-      const Amount& fund_output_amount, const ByteData256& msg);
+      const std::vector<SchnorrPubkey>& oracle_r_values,
+      const Script& funding_script_pubkey, const Amount& fund_output_amount,
+      const std::vector<ByteData256>& msgs);
 
   /**
    * @brief Sign a CET transaction using a counter party adaptor signature that
@@ -342,8 +347,8 @@ class CFD_DLC_EXPORT DlcManager {
    *
    * @param cet the CET to which the signatures will be added.
    * @param adaptor_sig the adaptor signature of the counterparty.
-   * @param oracle_signature the signature of the oracle over the corresponding
-   * event outcome.
+   * @param oracle_signatures the set of signatures from the oracle over the
+   * corresponding event outcome.
    * @param funding_sk the private key to generate own signature with.
    * @param funding_script_pubkey the script pubkey of the fund output.
    * @param fund_tx_id the transaction id of the fund transactions.
@@ -352,7 +357,7 @@ class CFD_DLC_EXPORT DlcManager {
    */
   static void SignCet(TransactionController* cet,
                       const AdaptorSignature& adaptor_sig,
-                      const SchnorrSignature& oracle_signature,
+                      const std::vector<SchnorrSignature>& oracle_signatures,
                       const Privkey funding_sk,
                       const Script& funding_script_pubkey,
                       const Txid& fund_tx_id, uint32_t fund_vout,
@@ -378,8 +383,9 @@ class CFD_DLC_EXPORT DlcManager {
   static bool VerifyCetAdaptorSignatures(
       const std::vector<TransactionController>& cets,
       const std::vector<AdaptorPair>& signature_and_proofs,
-      const std::vector<ByteData256>& msgs, const Pubkey& pubkey,
-      const SchnorrPubkey& oracle_pubkey, const SchnorrPubkey& oracle_r_value,
+      const std::vector<std::vector<ByteData256>>& msgs, const Pubkey& pubkey,
+      const SchnorrPubkey& oracle_pubkey,
+      const std::vector<SchnorrPubkey>& oracle_r_value,
       const Script& funding_script_pubkey, const Amount& fund_output_amount);
 
   /**
@@ -633,6 +639,20 @@ class CFD_DLC_EXPORT DlcManager {
       const PartyParams& params, uint64_t fee_rate,
       Amount option_premium = Amount::CreateBySatoshiAmount(0),
       Address premium_dest = Address());
+
+  /**
+   * @brief Computes an adaptor point from a set of messages, r_values and a
+   * public key.
+   *
+   * @param msgs the messages to use to compute the signature points.
+   * @param r_values the r_values to use to compute the signature points.
+   * @param pubkey the public key to use to compute the signature points.
+   * @return Pubkey the adaptor point corresponding to the sum of the computed
+   * signature points.
+   */
+  static Pubkey ComputeAdaptorPoint(const std::vector<ByteData256>& msgs,
+                                    const std::vector<SchnorrPubkey>& r_values,
+                                    const SchnorrPubkey& pubkey);
 };
 
 }  // namespace dlc
