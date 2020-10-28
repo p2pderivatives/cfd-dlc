@@ -304,7 +304,7 @@ void DlcManager::SignCet(TransactionController* cet,
     throw new CfdException(CfdError::kCfdIllegalArgumentError,
                            "Public key not part of the multi sig script.");
   }
-}
+}  // namespace dlc
 
 ByteData DlcManager::GetRawFundingTransactionInputSignature(
     const TransactionController& funding_transaction, const Privkey& privkey,
