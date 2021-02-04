@@ -44,3 +44,5 @@ external/libwally-core
 # generated doc
 doc/html*
 doc/latex
+
+.vscode

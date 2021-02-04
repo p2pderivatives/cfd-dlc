@@ -594,7 +594,7 @@ TEST(DlcManager, AdaptorSigMultipleNoncesWithFewerMessagesThanNonces) {
 
   EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
       adaptor_pairs[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
-      ORACLE_R_POINTS, lock_script, fund_amount, LOSE_MESSAGES_HASH_FEWER_MESSAGES));
+      {ORACLE_R_POINTS[0]}, lock_script, fund_amount, LOSE_MESSAGES_HASH_FEWER_MESSAGES));
 
   auto adaptor_secret = ORACLE_SIGNATURES[0].GetPrivkey();
   auto adapted_sig =

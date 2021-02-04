@@ -194,12 +194,8 @@ AdaptorPair DlcManager::CreateCetAdaptorSignature(
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Privkey& funding_sk, const Script& funding_script_pubkey,
     const Amount& total_collateral, const std::vector<ByteData256>& msgs) {
-  std::vector<SchnorrPubkey> r_values;
-  for (size_t i = 0; i < msgs.size(); i++) {
-    r_values.push_back(oracle_r_values[i]);
-  }
   auto adaptor_point =
-      ComputeAdaptorPoint(msgs, r_values, oracle_pubkey);
+      ComputeAdaptorPoint(msgs, oracle_r_values, oracle_pubkey);
 
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
@@ -221,8 +217,12 @@ std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
 
   std::vector<AdaptorPair> sigs;
   for (size_t i = 0; i < nb; i++) {
+    std::vector<SchnorrPubkey> r_values;
+    for (size_t j = 0; j < msgs[i].size(); j++) {
+      r_values.push_back(oracle_r_values[j]);
+    }
     sigs.push_back(CreateCetAdaptorSignature(
-        cets[i], oracle_pubkey, oracle_r_values, funding_sk,
+        cets[i], oracle_pubkey, r_values, funding_sk,
         funding_script_pubkey, total_collateral, msgs[i]));
   }
 
@@ -235,12 +235,8 @@ bool DlcManager::VerifyCetAdaptorSignature(
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Script& funding_script_pubkey, const Amount& total_collateral,
     const std::vector<ByteData256>& msgs) {
-  std::vector<SchnorrPubkey> r_values;
-  for (size_t i = 0; i < msgs.size(); i++) {
-    r_values.push_back(oracle_r_values[i]);
-  }
   auto adaptor_point =
-      ComputeAdaptorPoint(msgs, r_values, oracle_pubkey);
+      ComputeAdaptorPoint(msgs, oracle_r_values, oracle_pubkey);
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
       WitnessVersion::kVersion0);
@@ -265,9 +261,13 @@ bool DlcManager::VerifyCetAdaptorSignatures(
   bool all_valid = true;
 
   for (size_t i = 0; i < nb && all_valid; i++) {
+    std::vector<SchnorrPubkey> r_values;
+    for (size_t j = 0; j < msgs[i].size(); j++) {
+      r_values.push_back(oracle_r_values[j]);
+    }
     all_valid &= VerifyCetAdaptorSignature(
         signature_and_proofs[i], cets[i], pubkey, oracle_pubkey,
-        oracle_r_values, funding_script_pubkey, total_collateral, msgs[i]);
+        r_values, funding_script_pubkey, total_collateral, msgs[i]);
   }
 
   return all_valid;
