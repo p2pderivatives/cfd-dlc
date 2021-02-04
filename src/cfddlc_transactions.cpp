@@ -206,7 +206,7 @@ AdaptorPair DlcManager::CreateCetAdaptorSignature(
 std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
     const SchnorrPubkey& oracle_pubkey,
-    const std::vector<SchnorrPubkey>& oracle_r_value, const Privkey& funding_sk,
+    const std::vector<SchnorrPubkey>& oracle_r_values, const Privkey& funding_sk,
     const Script& funding_script_pubkey, const Amount& total_collateral,
     const std::vector<std::vector<ByteData256>>& msgs) {
   size_t nb = cets.size();
@@ -217,8 +217,12 @@ std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
 
   std::vector<AdaptorPair> sigs;
   for (size_t i = 0; i < nb; i++) {
+    std::vector<SchnorrPubkey> r_values;
+    for (size_t j = 0; j < msgs[i].size(); j++) {
+      r_values.push_back(oracle_r_values[j]);
+    }
     sigs.push_back(CreateCetAdaptorSignature(
-        cets[i], oracle_pubkey, oracle_r_value, funding_sk,
+        cets[i], oracle_pubkey, r_values, funding_sk,
         funding_script_pubkey, total_collateral, msgs[i]));
   }
 
@@ -257,9 +261,13 @@ bool DlcManager::VerifyCetAdaptorSignatures(
   bool all_valid = true;
 
   for (size_t i = 0; i < nb && all_valid; i++) {
+    std::vector<SchnorrPubkey> r_values;
+    for (size_t j = 0; j < msgs[i].size(); j++) {
+      r_values.push_back(oracle_r_values[j]);
+    }
     all_valid &= VerifyCetAdaptorSignature(
         signature_and_proofs[i], cets[i], pubkey, oracle_pubkey,
-        oracle_r_values, funding_script_pubkey, total_collateral, msgs[i]);
+        r_values, funding_script_pubkey, total_collateral, msgs[i]);
   }
 
   return all_valid;
@@ -304,7 +312,7 @@ void DlcManager::SignCet(TransactionController* cet,
     throw new CfdException(CfdError::kCfdIllegalArgumentError,
                            "Public key not part of the multi sig script.");
   }
-}
+}  // namespace dlc
 
 ByteData DlcManager::GetRawFundingTransactionInputSignature(
     const TransactionController& funding_transaction, const Privkey& privkey,
