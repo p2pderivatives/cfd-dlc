@@ -194,8 +194,12 @@ AdaptorPair DlcManager::CreateCetAdaptorSignature(
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Privkey& funding_sk, const Script& funding_script_pubkey,
     const Amount& total_collateral, const std::vector<ByteData256>& msgs) {
+  std::vector<SchnorrPubkey> r_values;
+  for (size_t i = 0; i < msgs.size(); i++) {
+    r_values.push_back(oracle_r_values[i]);
+  }
   auto adaptor_point =
-      ComputeAdaptorPoint(msgs, oracle_r_values, oracle_pubkey);
+      ComputeAdaptorPoint(msgs, r_values, oracle_pubkey);
 
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
@@ -206,7 +210,7 @@ AdaptorPair DlcManager::CreateCetAdaptorSignature(
 std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
     const SchnorrPubkey& oracle_pubkey,
-    const std::vector<SchnorrPubkey>& oracle_r_value, const Privkey& funding_sk,
+    const std::vector<SchnorrPubkey>& oracle_r_values, const Privkey& funding_sk,
     const Script& funding_script_pubkey, const Amount& total_collateral,
     const std::vector<std::vector<ByteData256>>& msgs) {
   size_t nb = cets.size();
@@ -218,7 +222,7 @@ std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
   std::vector<AdaptorPair> sigs;
   for (size_t i = 0; i < nb; i++) {
     sigs.push_back(CreateCetAdaptorSignature(
-        cets[i], oracle_pubkey, oracle_r_value, funding_sk,
+        cets[i], oracle_pubkey, oracle_r_values, funding_sk,
         funding_script_pubkey, total_collateral, msgs[i]));
   }
 
@@ -231,8 +235,12 @@ bool DlcManager::VerifyCetAdaptorSignature(
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Script& funding_script_pubkey, const Amount& total_collateral,
     const std::vector<ByteData256>& msgs) {
+  std::vector<SchnorrPubkey> r_values;
+  for (size_t i = 0; i < msgs.size(); i++) {
+    r_values.push_back(oracle_r_values[i]);
+  }
   auto adaptor_point =
-      ComputeAdaptorPoint(msgs, oracle_r_values, oracle_pubkey);
+      ComputeAdaptorPoint(msgs, r_values, oracle_pubkey);
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
       WitnessVersion::kVersion0);
