@@ -543,14 +543,11 @@ Pubkey DlcManager::ComputeAdaptorPoint(
                        "Number of r values and messages must match.");
   }
 
-  std::vector<Pubkey> sigpoints;
-
-  for (size_t i = 0; i < r_values.size(); i++) {
-    sigpoints.push_back(
-        SchnorrUtil::ComputeSigPoint(msgs[i], r_values[i], pubkey));
+  if (msgs.size() == 1) {
+    return SchnorrUtil::ComputeSigPoint(msgs[0], r_values[0], pubkey);
   }
 
-  return sigpoints.size() > 1 ? Pubkey::CombinePubkey(sigpoints) : sigpoints[0];
+  return SchnorrUtil::ComputeSigPointBatch(msgs, r_values, pubkey);
 }
 }  // namespace dlc
 }  // namespace cfd
