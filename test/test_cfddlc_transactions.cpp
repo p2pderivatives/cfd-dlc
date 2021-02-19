@@ -43,6 +43,10 @@ const std::vector<ByteData256> WIN_MESSAGES_HASH = {
     HashUtil::Sha256(WIN_MESSAGES[0]), HashUtil::Sha256(WIN_MESSAGES[1])};
 const std::vector<ByteData256> LOSE_MESSAGES_HASH = {
     HashUtil::Sha256(LOSE_MESSAGES[0]), HashUtil::Sha256(LOSE_MESSAGES[1])};
+const std::vector<ByteData256> WIN_MESSAGES_HASH_FEWER_MESSAGES = {
+    HashUtil::Sha256(WIN_MESSAGES[0])};
+const std::vector<ByteData256> LOSE_MESSAGES_HASH_FEWER_MESSAGES = {
+    HashUtil::Sha256(LOSE_MESSAGES[0])};
 const std::vector<std::vector<ByteData256>> MESSAGES_HASH = {
     WIN_MESSAGES_HASH, LOSE_MESSAGES_HASH};
 const Privkey ORACLE_PRIVKEY(
@@ -567,4 +571,60 @@ TEST(DlcManager, AdaptorSigMultipleNonces) {
       adapted_sig, LOCAL_FUND_PUBKEY, fund_txid, 0, lock_script, SigHashType(),
       fund_amount, WitnessVersion::kVersion0);
   EXPECT_TRUE(is_valid);
+}
+
+TEST(DlcManager, AdaptorSigMultipleNoncesWithFewerMessagesThanNonces) {
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
+  auto dlc_transactions = DlcManager::CreateDlcTransactions(
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
+      OPTION_PREMIUM);
+  auto fund_transaction = dlc_transactions.fund_transaction;
+  auto cets = dlc_transactions.cets;
+  auto cet0 = cets[0];
+  auto lock_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
+                                                           REMOTE_FUND_PUBKEY);
+
+  auto fund_amount = fund_transaction.GetTransaction().GetTxOut(0).GetValue();
+  auto fund_txid = fund_transaction.GetTransaction().GetTxid();
+
+  auto adaptor_pairs = DlcManager::CreateCetAdaptorSignatures(
+      cets, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PRIVKEY, lock_script,
+      fund_amount, {WIN_MESSAGES_HASH_FEWER_MESSAGES, LOSE_MESSAGES_HASH_FEWER_MESSAGES});
+
+  EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
+      adaptor_pairs[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+      {ORACLE_R_POINTS[0]}, lock_script, fund_amount, LOSE_MESSAGES_HASH_FEWER_MESSAGES));
+
+  auto adaptor_secret = ORACLE_SIGNATURES[0].GetPrivkey();
+  auto adapted_sig =
+      AdaptorUtil::Adapt(adaptor_pairs[0].signature, adaptor_secret);
+
+  auto is_valid = cet0.VerifyInputSignature(
+      adapted_sig, LOCAL_FUND_PUBKEY, fund_txid, 0, lock_script, SigHashType(),
+      fund_amount, WitnessVersion::kVersion0);
+  EXPECT_TRUE(is_valid);
+}
+
+TEST(DlcManager, AdaptorSigMultipleNoncesWithMoreMessagesThanNoncesFails) {
+  std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
+                                      {LOSE_AMOUNT, WIN_AMOUNT}};
+  auto dlc_transactions = DlcManager::CreateDlcTransactions(
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
+      OPTION_PREMIUM);
+  auto fund_transaction = dlc_transactions.fund_transaction;
+  auto cets = dlc_transactions.cets;
+  auto cet0 = cets[0];
+  auto lock_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
+                                                           REMOTE_FUND_PUBKEY);
+
+  auto fund_amount = fund_transaction.GetTransaction().GetTxOut(0).GetValue();
+  auto fund_txid = fund_transaction.GetTransaction().GetTxid();
+
+  // Act/Assert
+  EXPECT_THROW(DlcManager::CreateCetAdaptorSignatures(
+      cets, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PRIVKEY, lock_script,
+      fund_amount, {WIN_MESSAGES_HASH, LOSE_MESSAGES_HASH,
+      WIN_MESSAGES_HASH_FEWER_MESSAGES, LOSE_MESSAGES_HASH_FEWER_MESSAGES}),
+               CfdException);
 }
