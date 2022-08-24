@@ -9,7 +9,7 @@
 #include "wally_crypto.h"  // NOLINT
 
 using cfd::Amount;
-using cfd::core::AdaptorUtil;
+using cfd::core::AdaptorSignature;
 using cfd::core::Address;
 using cfd::core::ByteData;
 using cfd::core::ByteData256;
@@ -162,8 +162,8 @@ const ByteData CET_HEX_SIGNED(
     "020000000001019246862ea34db0833bd4bd9e657d61e2e5447d0438f6f6181d1cd329e8cf"
     "71c30000000000ffffffff02603bea0b000000001600145dedfbf9ea599dd4e3ca6a80b333"
     "c472fd0b3f69a0860100000000001600149652d86bedf43ad264362e6e6eba6eb764508127"
-    "0400473044022006560a7c24ce8688620cb1002b822c187858fba43607b286f09b9c02443b"
-    "98f002207f8b1b6b120c0f4717f9f8c2cb739a400f94987dd48577ac4c4624c1477b969801"
+    "04004730440220065df970e026e20fe75ae7700a85e0a0cf1326d0af7ee4e9788877237d13"
+    "236a022054452890dd805cd3136994a07ccd5e108280c0c4224632d853fbd25b286c6f8201"
     "473044022036d971f3da54303facb5fbf8dc7e9eef452cd94723eb6dc52f7aeee454791a00"
     "02204cf335114c47bae5e6dc2e00f566d1e37ec6fe25350fe797d48bff2573eeb548014752"
     "210279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817982102c6"
@@ -257,7 +257,7 @@ TEST(DlcManager, CetTest) {
 
   auto fund_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
                                                            REMOTE_FUND_PUBKEY);
-  auto local_adaptor_pair = DlcManager::CreateCetAdaptorSignature(
+  auto local_adaptor_signature = DlcManager::CreateCetAdaptorSignature(
       cet, ORACLE_PUBKEY, {ORACLE_R_POINTS[0]}, LOCAL_FUND_PRIVKEY, fund_script,
       FUND_OUTPUT, {WIN_MESSAGES_HASH[0]});
   auto remote_adaptor_pair = DlcManager::CreateCetAdaptorSignature(
@@ -276,15 +276,15 @@ TEST(DlcManager, CetTest) {
       cet.GetTransaction().GetTxOut(1).GetLockingScript().IsP2wpkhScript());
   EXPECT_EQ(CET_HEX.GetHex(), cet.GetHex());
   EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
-      local_adaptor_pair, cet, LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+      local_adaptor_signature, cet, LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
       {ORACLE_R_POINTS[0]}, fund_script, FUND_OUTPUT, {WIN_MESSAGES_HASH[0]}));
   EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
       remote_adaptor_pair, cet, REMOTE_FUND_PUBKEY, ORACLE_PUBKEY,
       {ORACLE_R_POINTS[0]}, fund_script, FUND_OUTPUT, {WIN_MESSAGES_HASH[0]}));
 
-  DlcManager::SignCet(&cet, local_adaptor_pair.signature,
-                      {ORACLE_SIGNATURES[0]}, REMOTE_FUND_PRIVKEY, fund_script,
-                      FUND_TX_ID, 0, FUND_OUTPUT);
+  DlcManager::SignCet(&cet, local_adaptor_signature, {ORACLE_SIGNATURES[0]},
+                      REMOTE_FUND_PRIVKEY, fund_script, FUND_TX_ID, 0,
+                      FUND_OUTPUT);
   EXPECT_EQ(cet.GetHex(), CET_HEX_SIGNED.GetHex());
 }
 
@@ -516,17 +516,17 @@ TEST(DlcManager, AdaptorSigTest) {
   auto fund_amount = fund_transaction.GetTransaction().GetTxOut(0).GetValue();
   auto fund_txid = fund_transaction.GetTransaction().GetTxid();
 
-  auto adaptor_pairs = DlcManager::CreateCetAdaptorSignatures(
+  auto adaptor_signatures = DlcManager::CreateCetAdaptorSignatures(
       cets, ORACLE_PUBKEY, {ORACLE_R_POINTS[0]}, LOCAL_FUND_PRIVKEY,
       lock_script, fund_amount,
       {{WIN_MESSAGES_HASH[0]}, {LOSE_MESSAGES_HASH[0]}});
 
   EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
-      adaptor_pairs[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+      adaptor_signatures[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
       {ORACLE_R_POINTS[0]}, lock_script, fund_amount, {LOSE_MESSAGES_HASH[0]}));
 
-  auto adapted_sig = AdaptorUtil::Adapt(adaptor_pairs[0].signature,
-                                        ORACLE_SIGNATURES[0].GetPrivkey());
+  auto adapted_sig =
+      adaptor_signatures[0].Decrypt(ORACLE_SIGNATURES[0].GetPrivkey());
 
   auto is_valid = cet0.VerifyInputSignature(
       adapted_sig, LOCAL_FUND_PUBKEY, fund_txid, 0, lock_script, SigHashType(),
@@ -549,19 +549,18 @@ TEST(DlcManager, AdaptorSigMultipleNonces) {
   auto fund_amount = fund_transaction.GetTransaction().GetTxOut(0).GetValue();
   auto fund_txid = fund_transaction.GetTransaction().GetTxid();
 
-  auto adaptor_pairs = DlcManager::CreateCetAdaptorSignatures(
+  auto adaptor_signatures = DlcManager::CreateCetAdaptorSignatures(
       cets, ORACLE_PUBKEY, ORACLE_R_POINTS, LOCAL_FUND_PRIVKEY, lock_script,
       fund_amount, {WIN_MESSAGES_HASH, LOSE_MESSAGES_HASH});
 
   EXPECT_TRUE(DlcManager::VerifyCetAdaptorSignature(
-      adaptor_pairs[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
+      adaptor_signatures[1], cets[1], LOCAL_FUND_PUBKEY, ORACLE_PUBKEY,
       ORACLE_R_POINTS, lock_script, fund_amount, LOSE_MESSAGES_HASH));
 
   auto adaptor_secret = ORACLE_SIGNATURES[0].GetPrivkey();
   adaptor_secret = adaptor_secret.CreateTweakAdd(
       ByteData256(ORACLE_SIGNATURES[1].GetPrivkey().GetData()));
-  auto adapted_sig =
-      AdaptorUtil::Adapt(adaptor_pairs[0].signature, adaptor_secret);
+  auto adapted_sig = adaptor_signatures[0].Decrypt(adaptor_secret);
 
   auto is_valid = cet0.VerifyInputSignature(
       adapted_sig, LOCAL_FUND_PUBKEY, fund_txid, 0, lock_script, SigHashType(),

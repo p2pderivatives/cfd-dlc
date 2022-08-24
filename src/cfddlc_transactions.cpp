@@ -27,7 +27,6 @@ namespace dlc {
 using cfd::Amount;
 using cfd::Script;
 using cfd::TransactionController;
-using cfd::core::AdaptorUtil;
 using cfd::core::Address;
 using cfd::core::AddressType;
 using cfd::core::ByteData;
@@ -189,7 +188,7 @@ bool DlcManager::VerifyFundTxSignature(const TransactionController& fund_tx,
       input_amount, WitnessVersion::kVersion0);
 }
 
-AdaptorPair DlcManager::CreateCetAdaptorSignature(
+AdaptorSignature DlcManager::CreateCetAdaptorSignature(
     const TransactionController& cet, const SchnorrPubkey& oracle_pubkey,
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Privkey& funding_sk, const Script& funding_script_pubkey,
@@ -200,10 +199,10 @@ AdaptorPair DlcManager::CreateCetAdaptorSignature(
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
       WitnessVersion::kVersion0);
-  return AdaptorUtil::Sign(sig_hash, funding_sk, adaptor_point);
+  return AdaptorSignature::Encrypt(sig_hash, funding_sk, adaptor_point);
 }
 
-std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
+std::vector<AdaptorSignature> DlcManager::CreateCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
     const SchnorrPubkey& oracle_pubkey,
     const std::vector<SchnorrPubkey>& oracle_r_value, const Privkey& funding_sk,
@@ -215,7 +214,7 @@ std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
                        "Number of cets differ from number of messages");
   }
 
-  std::vector<AdaptorPair> sigs;
+  std::vector<AdaptorSignature> sigs;
   for (size_t i = 0; i < nb; i++) {
     sigs.push_back(CreateCetAdaptorSignature(
         cets[i], oracle_pubkey, oracle_r_value, funding_sk,
@@ -226,7 +225,7 @@ std::vector<AdaptorPair> DlcManager::CreateCetAdaptorSignatures(
 }
 
 bool DlcManager::VerifyCetAdaptorSignature(
-    const AdaptorPair& adaptor_pair, const TransactionController& cet,
+    const AdaptorSignature& adaptor_signature, const TransactionController& cet,
     const Pubkey& pubkey, const SchnorrPubkey& oracle_pubkey,
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Script& funding_script_pubkey, const Amount& total_collateral,
@@ -236,19 +235,18 @@ bool DlcManager::VerifyCetAdaptorSignature(
   auto sig_hash = cet.GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), total_collateral,
       WitnessVersion::kVersion0);
-  return AdaptorUtil::Verify(adaptor_pair.signature, adaptor_pair.proof,
-                             adaptor_point, sig_hash, pubkey);
+  return adaptor_signature.Verify(sig_hash, pubkey, adaptor_point);
 }
 
 bool DlcManager::VerifyCetAdaptorSignatures(
     const std::vector<TransactionController>& cets,
-    const std::vector<AdaptorPair>& signature_and_proofs,
+    const std::vector<AdaptorSignature>& adaptor_signatures,
     const std::vector<std::vector<ByteData256>>& msgs, const Pubkey& pubkey,
     const SchnorrPubkey& oracle_pubkey,
     const std::vector<SchnorrPubkey>& oracle_r_values,
     const Script& funding_script_pubkey, const Amount& total_collateral) {
   auto nb = cets.size();
-  if (nb != signature_and_proofs.size() || nb != msgs.size()) {
+  if (nb != adaptor_signatures.size() || nb != msgs.size()) {
     throw CfdException(
         CfdError::kCfdIllegalArgumentError,
         "Number of transactions, signatures and messages differs.");
@@ -258,8 +256,8 @@ bool DlcManager::VerifyCetAdaptorSignatures(
 
   for (size_t i = 0; i < nb && all_valid; i++) {
     all_valid &= VerifyCetAdaptorSignature(
-        signature_and_proofs[i], cets[i], pubkey, oracle_pubkey,
-        oracle_r_values, funding_script_pubkey, total_collateral, msgs[i]);
+        adaptor_signatures[i], cets[i], pubkey, oracle_pubkey, oracle_r_values,
+        funding_script_pubkey, total_collateral, msgs[i]);
   }
 
   return all_valid;
@@ -284,7 +282,7 @@ void DlcManager::SignCet(TransactionController* cet,
         ByteData256(oracle_signatures[i].GetPrivkey().GetData()));
   }
 
-  auto adapted_sig = AdaptorUtil::Adapt(adaptor_sig, adaptor_secret);
+  auto adapted_sig = adaptor_sig.Decrypt(adaptor_secret);
   auto sig_hash = cet->GetTransaction().GetSignatureHash(
       0, funding_script_pubkey.GetData(), SigHashType(), fund_amount,
       WitnessVersion::kVersion0);

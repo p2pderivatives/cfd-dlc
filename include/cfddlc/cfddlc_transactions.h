@@ -23,8 +23,6 @@ using cfd::TransactionController;
 using cfd::Txid;
 using cfd::TxIn;
 using cfd::TxOut;
-using cfd::core::AdaptorPair;
-using cfd::core::AdaptorProof;
 using cfd::core::AdaptorSignature;
 using cfd::core::Address;
 using cfd::core::ByteData;
@@ -268,9 +266,9 @@ class CFD_DLC_EXPORT DlcManager {
    * @param fund_output_amount the value of the fund output.
    * @param msgs the set of messages for the outcome corresponding to the given
    * CET.
-   * @return AdaptorPair an adaptor signature and its dleq proof.
+   * @return AdaptorSignature an adaptor signature and its dleq proof.
    */
-  static AdaptorPair CreateCetAdaptorSignature(
+  static AdaptorSignature CreateCetAdaptorSignature(
       const TransactionController& cet, const SchnorrPubkey& oracle_pubkey,
       const std::vector<SchnorrPubkey>& oracle_r_values,
       const Privkey& funding_sk, const Script& funding_script_pubkey,
@@ -287,10 +285,10 @@ class CFD_DLC_EXPORT DlcManager {
    * @param funding_script_pubkey the script pubkey of the fund output.
    * @param fund_output_amount the value of the fund output.
    * @param msgs the messages for the outcomes corresponding to the given CETs.
-   * @return std::vector<AdaptorPair> a set of signature together with their
-   * DLEq proofs.
+   * @return std::vector<AdaptorSignature> a set of signature together with
+   * their DLEq proofs.
    */
-  static std::vector<AdaptorPair> CreateCetAdaptorSignatures(
+  static std::vector<AdaptorSignature> CreateCetAdaptorSignatures(
       const std::vector<TransactionController>& cets,
       const SchnorrPubkey& oracle_pubkey,
       const std::vector<SchnorrPubkey>& oracle_r_values,
@@ -334,7 +332,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @return false
    */
   static bool VerifyCetAdaptorSignature(
-      const AdaptorPair& adaptor_pair, const TransactionController& cet,
+      const AdaptorSignature& adaptor_pair, const TransactionController& cet,
       const Pubkey& pubkey, const SchnorrPubkey& oracle_pubkey,
       const std::vector<SchnorrPubkey>& oracle_r_values,
       const Script& funding_script_pubkey, const Amount& fund_output_amount,
@@ -382,7 +380,7 @@ class CFD_DLC_EXPORT DlcManager {
    */
   static bool VerifyCetAdaptorSignatures(
       const std::vector<TransactionController>& cets,
-      const std::vector<AdaptorPair>& signature_and_proofs,
+      const std::vector<AdaptorSignature>& signature_and_proofs,
       const std::vector<std::vector<ByteData256>>& msgs, const Pubkey& pubkey,
       const SchnorrPubkey& oracle_pubkey,
       const std::vector<SchnorrPubkey>& oracle_r_value,
