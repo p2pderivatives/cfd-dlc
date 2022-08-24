@@ -57,19 +57,26 @@ static const uint32_t TX_VERSION = 2;
 static const uint64_t DUST_LIMIT = 1000;
 
 const uint32_t FUND_TX_BASE_WEIGHT = 214;
-const uint32_t CET_BASE_WEIGHT = 498;
+const uint32_t CET_BASE_WEIGHT = 500;
 
-TransactionController DlcManager::CreateCet(const TxOut& local_output,
-                                            const TxOut& remote_output,
-                                            const Txid& fund_tx_id,
-                                            const uint32_t fund_vout,
-                                            uint32_t lock_time) {
+bool orderTxInputInfo(const TxInputInfo& a, const TxInputInfo& b) {
+  return a.serialId < b.serialId;
+}
+
+TransactionController DlcManager::CreateCet(
+    const TxOut& offer_output, const uint64_t offer_payout_serial_id,
+    const TxOut& accept_output, const uint64_t accept_payout_serial_id,
+    const Txid& fund_tx_id, const uint32_t fund_vout, uint32_t lock_time) {
   auto cet_tx = TransactionController(TX_VERSION, lock_time);
-  if (!IsDustOutput(local_output)) {
-    cet_tx.AddTxOut(local_output.GetLockingScript(), local_output.GetValue());
+  const auto [first_output, second_output] =
+      offer_payout_serial_id < accept_payout_serial_id
+          ? std::make_tuple(offer_output, accept_output)
+          : std::make_tuple(accept_output, offer_output);
+  if (!IsDustOutput(first_output)) {
+    cet_tx.AddTxOut(first_output.GetLockingScript(), first_output.GetValue());
   }
-  if (!IsDustOutput(remote_output)) {
-    cet_tx.AddTxOut(remote_output.GetLockingScript(), remote_output.GetValue());
+  if (!IsDustOutput(second_output)) {
+    cet_tx.AddTxOut(second_output.GetLockingScript(), second_output.GetValue());
   }
   cet_tx.AddTxIn(fund_tx_id, fund_vout);
   return cet_tx;
@@ -77,17 +84,20 @@ TransactionController DlcManager::CreateCet(const TxOut& local_output,
 
 std::vector<TransactionController> DlcManager::CreateCets(
     const Txid& fund_tx_id, const uint32_t fund_vout,
-    const Script& local_final_script_pubkey,
-    const Script& remote_final_script_pubkey,
+    const Script& offer_final_script_pubkey,
+    const uint64_t offer_payout_serial_id,
+    const Script& accept_final_script_pubkey,
+    const uint64_t accept_payout_serial_id,
     const std::vector<DlcOutcome> outcomes, uint32_t lock_time) {
   std::vector<TransactionController> cets;
   cets.reserve(outcomes.size());
 
   for (auto outcome : outcomes) {
-    TxOut local_output(outcome.local_payout, local_final_script_pubkey);
-    TxOut remote_output(outcome.remote_payout, remote_final_script_pubkey);
-    cets.push_back(CreateCet(local_output, remote_output, fund_tx_id, fund_vout,
-                             lock_time));
+    TxOut offer_output(outcome.local_payout, offer_final_script_pubkey);
+    TxOut accept_output(outcome.remote_payout, accept_final_script_pubkey);
+    cets.push_back(CreateCet(offer_output, offer_payout_serial_id,
+                             accept_output, accept_payout_serial_id, fund_tx_id,
+                             fund_vout, lock_time));
   }
 
   return cets;
@@ -105,34 +115,80 @@ Script DlcManager::CreateFundTxLockingScript(const Pubkey& local_fund_pubkey,
 }
 
 TransactionController DlcManager::CreateFundTransaction(
-    const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-    const Amount& output_amount, const std::vector<TxIn>& local_inputs,
-    const TxOut& local_change_output, const std::vector<TxIn>& remote_inputs,
-    const TxOut& remote_change_output, const Address& option_dest,
-    const Amount& option_premium, const uint64_t lock_time) {
+    const PartyParams& offer_params, const PartyParams& accept_params,
+    const uint32_t fee_rate, const uint64_t fund_output_serial_id,
+    const Address& option_dest, const Amount& option_premium,
+    const uint64_t lock_time) {
   auto transaction = TransactionController(TX_VERSION, lock_time);
-  auto multi_sig_script =
-      CreateFundTxLockingScript(local_fund_pubkey, remote_fund_pubkey);
-  auto wit_script = ScriptUtil::CreateP2wshLockingScript(multi_sig_script);
-  transaction.AddTxOut(wit_script, output_amount);
+  TxOut offer_change_output;
+  auto total_collateral = offer_params.collateral + accept_params.collateral;
+  uint64_t local_fund_fee;
+  uint64_t local_cet_fee;
+  std::tie(offer_change_output, local_fund_fee, local_cet_fee) =
+      GetChangeOutputAndFees(offer_params, fee_rate, option_premium,
+                             option_dest);
+
+  TxOut accept_change_output;
+  uint64_t remote_fund_fee;
+  uint64_t remote_cet_fee;
+  std::tie(accept_change_output, remote_fund_fee, remote_cet_fee) =
+      GetChangeOutputAndFees(accept_params, fee_rate);
+
+  auto fund_output_value = offer_params.input_amount +
+                           accept_params.input_amount -
+                           offer_change_output.GetValue().GetSatoshiValue() -
+                           accept_change_output.GetValue().GetSatoshiValue() -
+                           local_fund_fee - remote_fund_fee - option_premium;
+
+  if (total_collateral + local_cet_fee + remote_cet_fee != fund_output_value) {
+    throw CfdException(CfdError::kCfdInternalError,
+                       "Fee computation doesn't match.");
+  }
+
+  std::vector<TxInputInfo> all_input_infos(offer_params.inputs_info);
+  copy(accept_params.inputs_info.begin(), accept_params.inputs_info.end(),
+       back_inserter(all_input_infos));
+
+  std::sort(all_input_infos.begin(), all_input_infos.end(), orderTxInputInfo);
 
   std::vector<TxIn> inputs;
-  inputs.reserve(local_inputs.size() + remote_inputs.size());
-  inputs.insert(inputs.end(), local_inputs.begin(), local_inputs.end());
-  inputs.insert(inputs.end(), remote_inputs.begin(), remote_inputs.end());
+
+  for (auto input_info : all_input_infos) {
+    inputs.push_back(input_info.input);
+  }
+
+  auto multi_sig_script = CreateFundTxLockingScript(offer_params.fund_pubkey,
+                                                    accept_params.fund_pubkey);
+  auto wit_script = ScriptUtil::CreateP2wshLockingScript(multi_sig_script);
+
+  std::vector<std::tuple<Script, Amount, uint64_t>> outputs;
+  outputs.push_back(
+      std::make_tuple(wit_script, fund_output_value, fund_output_serial_id));
 
   for (auto it = inputs.cbegin(); it != inputs.end(); ++it) {
     transaction.AddTxIn(it->GetTxid(), it->GetVout(), it->GetUnlockingScript());
   }
 
-  if (!IsDustOutput(local_change_output)) {
-    transaction.AddTxOut(local_change_output.GetLockingScript(),
-                         local_change_output.GetValue());
+  if (!IsDustOutput(offer_change_output)) {
+    outputs.push_back(std::make_tuple(offer_change_output.GetLockingScript(),
+                                      offer_change_output.GetValue(),
+                                      offer_params.change_serial_id));
   }
 
-  if (!IsDustOutput(remote_change_output)) {
-    transaction.AddTxOut(remote_change_output.GetLockingScript(),
-                         remote_change_output.GetValue());
+  if (!IsDustOutput(accept_change_output)) {
+    outputs.push_back(std::make_tuple(accept_change_output.GetLockingScript(),
+                                      accept_change_output.GetValue(),
+                                      accept_params.change_serial_id));
+  }
+
+  std::sort(outputs.begin(), outputs.end(),
+            [](const std::tuple<Script, Amount, uint64_t> a,
+               const std::tuple<Script, Amount, uint64_t> b) {
+              return std::get<2>(a) < std::get<2>(b);
+            });
+
+  for (auto const& [script, amount, id] : outputs) {
+    transaction.AddTxOut(script, amount);
   }
 
   if (option_premium > 0) {
@@ -401,12 +457,12 @@ ByteData DlcManager::GetRawRefundTxSignature(
 }
 
 DlcTransactions DlcManager::CreateDlcTransactions(
-    const std::vector<DlcOutcome>& outcomes, const PartyParams& local_params,
-    const PartyParams& remote_params, uint64_t refund_locktime,
-    uint32_t fee_rate, const Address& option_dest, const Amount& option_premium,
+    const std::vector<DlcOutcome>& outcomes, const PartyParams& offer_params,
+    const PartyParams& accept_params, uint64_t refund_locktime,
+    uint32_t fee_rate, uint64_t fund_output_serial_id,
+    const Address& option_dest, const Amount& option_premium,
     uint64_t fund_lock_time, uint64_t cet_lock_time) {
-  auto total_collateral = local_params.collateral + remote_params.collateral;
-
+  auto total_collateral = offer_params.collateral + accept_params.collateral;
   for (auto outcome : outcomes) {
     if (outcome.local_payout + outcome.remote_payout != total_collateral) {
       throw CfdException(CfdError::kCfdIllegalArgumentError,
@@ -414,61 +470,28 @@ DlcTransactions DlcManager::CreateDlcTransactions(
     }
   }
 
-  TxOut local_change_output;
-  uint64_t local_fund_fee;
-  uint64_t local_cet_fee;
-  std::tie(local_change_output, local_fund_fee, local_cet_fee) =
-      GetChangeOutputAndFees(local_params, fee_rate, option_premium,
-                             option_dest);
+  auto fund_tx = CreateFundTransaction(offer_params, accept_params, fee_rate,
+                                       fund_output_serial_id, option_dest,
+                                       option_premium, fund_lock_time);
 
-  TxOut remote_change_output;
-  uint64_t remote_fund_fee;
-  uint64_t remote_cet_fee;
-  std::tie(remote_change_output, remote_fund_fee, remote_cet_fee) =
-      GetChangeOutputAndFees(remote_params, fee_rate);
-
-  auto fund_output_value = local_params.input_amount +
-                           remote_params.input_amount -
-                           local_change_output.GetValue().GetSatoshiValue() -
-                           remote_change_output.GetValue().GetSatoshiValue() -
-                           local_fund_fee - remote_fund_fee - option_premium;
-
-  if (total_collateral + local_cet_fee + remote_cet_fee != fund_output_value) {
-    throw CfdException(CfdError::kCfdInternalError,
-                       "Fee computation doesn't match.");
-  }
-
-  std::vector<TxIn> local_inputs;
-
-  for (auto input_info : local_params.inputs_info) {
-    local_inputs.push_back(input_info.input);
-  }
-
-  std::vector<TxIn> remote_inputs;
-
-  for (auto input_info : remote_params.inputs_info) {
-    remote_inputs.push_back(input_info.input);
-  }
-
-  auto fund_tx = CreateFundTransaction(
-      local_params.fund_pubkey, remote_params.fund_pubkey, fund_output_value,
-      local_inputs, local_change_output, remote_inputs, remote_change_output,
-      option_dest, option_premium, fund_lock_time);
-
+  auto funding_script_pubkey = CreateFundTxLockingScript(
+      offer_params.fund_pubkey, accept_params.fund_pubkey);
+  auto wit_script = ScriptUtil::CreateP2wshLockingScript(funding_script_pubkey);
   // the given lock time.
   auto fund_tx_id = fund_tx.GetTransaction().GetTxid();
-  uint32_t fund_vout = 0;
+  uint32_t fund_vout = fund_tx.GetTransaction().GetTxOutIndex(wit_script);
 
-  auto cets =
-      CreateCets(fund_tx_id, fund_vout, local_params.final_script_pubkey,
-                 remote_params.final_script_pubkey, outcomes, cet_lock_time);
+  auto cets = CreateCets(
+      fund_tx_id, fund_vout, offer_params.final_script_pubkey,
+      offer_params.final_serial_id, accept_params.final_script_pubkey,
+      accept_params.final_serial_id, outcomes, cet_lock_time);
 
   auto refund_tx = CreateRefundTransaction(
-      local_params.final_script_pubkey, remote_params.final_script_pubkey,
-      local_params.collateral, remote_params.collateral, refund_locktime,
+      offer_params.final_script_pubkey, accept_params.final_script_pubkey,
+      offer_params.collateral, accept_params.collateral, refund_locktime,
       fund_tx_id, fund_vout);
 
-  return {fund_tx, cets, refund_tx};
+  return {fund_tx, cets, refund_tx, funding_script_pubkey};
 }
 
 uint32_t DlcManager::GetTotalInputVSize(const std::vector<TxIn>& inputs) {

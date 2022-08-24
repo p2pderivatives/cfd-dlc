@@ -55,6 +55,11 @@ struct CFD_DLC_EXPORT DlcTransactions {
    *
    */
   TransactionController refund_transaction;
+  /**
+   * @brief The script pubkey of the fund transaction.
+   *
+   */
+  Script fundind_script_pubkey;
 };
 
 /**
@@ -90,6 +95,11 @@ struct TxInputInfo {
    *
    */
   uint32_t max_witness_length;
+  /**
+   * @brief
+   *
+   */
+  uint64_t serialId;
 };
 
 /**
@@ -110,10 +120,20 @@ struct PartyParams {
    */
   Script change_script_pubkey;
   /**
+   * @brief The serial id  to order the fund transaction outputs.
+   *
+   */
+  uint64_t change_serial_id;
+  /**
    * @brief The script pubkey for the final output.
    *
    */
   Script final_script_pubkey;
+  /**
+   * @brief The serial id to order the CET outputs.
+   *
+   */
+  uint64_t final_serial_id;
   /**
    * @brief A list of inputs to fund the contract
    *
@@ -147,11 +167,10 @@ class CFD_DLC_EXPORT DlcManager {
    * @param lock_time lock time (optional)
    * @return TransactionController created CET
    */
-  static TransactionController CreateCet(const TxOut& local_output,
-                                         const TxOut& remote_output,
-                                         const Txid& fund_tx_id,
-                                         const uint32_t fund_vout,
-                                         uint32_t lock_time = 0);
+  static TransactionController CreateCet(
+      const TxOut& offer_output, const uint64_t offer_payout_serial_id,
+      const TxOut& accept_output, const uint64_t accept_payout_serial_id,
+      const Txid& fund_tx_id, const uint32_t fund_vout, uint32_t lock_time = 0);
   /**
    * @brief Create a Cets object
    *
@@ -166,22 +185,18 @@ class CFD_DLC_EXPORT DlcManager {
   static std::vector<TransactionController> CreateCets(
       const Txid& fund_tx_id, const uint32_t fund_vout,
       const Script& local_final_script_pubkey,
+      const uint64_t offer_payout_serial_id,
       const Script& remote_final_script_pubkey,
+      const uint64_t accept_payout_serial_id,
       const std::vector<DlcOutcome> outcomes, uint32_t lock_time = 0);
 
   /**
    * @brief Create a Fund Transaction
    *
-   * @param local_fund_pubkey the public key of the party that might submit the
-   * transaction.
-   * @param remote_fund_pubkey the public key of the counter-party.
-   * @param output_amount the amount to direct to the multisig output.
-   * @param local_inputs the set of inputs used for funding by the local party.
-   * @param local_change_output the change output to the local party.
-   * @param remote_inputs the set of inputs used for funding by the
-   * counter-party.
-   * @param remote_change_output the change output to the
-   * counter-party.
+   * @param offer_params the parameters of the offer party.
+   * @param accept_params the parameters of the accept party.
+   * @param fee_rate the fee rate to use to compute fees.
+   * @param fund_output_serial_id serial id to order fund outputs.
    * @param option_dest (optional) destination address for the payment of the
    * option premium
    * @param option_premium (optional) value for the option premium
@@ -191,10 +206,9 @@ class CFD_DLC_EXPORT DlcManager {
    * @return TransactionController the created fund transaction.
    */
   static TransactionController CreateFundTransaction(
-      const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
-      const Amount& output_amount, const std::vector<TxIn>& local_inputs,
-      const TxOut& local_change_output, const std::vector<TxIn>& remote_inputs,
-      const TxOut& remote_change_output, const Address& option_dest = Address(),
+      const PartyParams& offer_params, const PartyParams& accept_params,
+      const uint32_t fee_rate, const uint64_t fund_output_serial_id,
+      const Address& option_dest = Address(),
       const Amount& option_premium = Amount::CreateBySatoshiAmount(0),
       const uint64_t lock_time = 0);
 
@@ -523,6 +537,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @param refund_locktime the unix time or block number after which the
    * refund transaction can be used.
    * @param fee_rate the fee rate to compute the fees.
+   * @param fund_output_serial_id serial id to order fund transaction outputs.
    * @param option_dest (optional) destination address for the payment of the
    * option premium
    * @param option_premium (optional) value for the option premium
@@ -536,7 +551,8 @@ class CFD_DLC_EXPORT DlcManager {
   static DlcTransactions CreateDlcTransactions(
       const std::vector<DlcOutcome>& outcomes, const PartyParams& local_params,
       const PartyParams& remote_params, uint64_t refund_locktime,
-      uint32_t fee_rate, const Address& option_dest = Address(),
+      uint32_t fee_rate, uint64_t fund_output_serial_id,
+      const Address& option_dest = Address(),
       const Amount& option_premium = Amount::CreateBySatoshiAmount(0),
       const uint64_t fund_lock_time = 0, const uint64_t cet_lock_time = 0);
 
@@ -563,7 +579,7 @@ class CFD_DLC_EXPORT DlcManager {
    * @return TransactionController the created transaction.
    */
   static TransactionController CreateFundTransaction(
-      const Pubkey& local_fund_pubkey, const Pubkey& remote_fund_pubkey,
+      const PartyParams& local_params, const PartyParams& remote_params,
       const Amount& local_input_amount, const Amount& local_collateral_amount,
       const Amount& remote_input_amount, const Amount& remote_collateral_amount,
       const std::vector<TxIn>& local_inputs,

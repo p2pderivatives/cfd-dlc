@@ -1,5 +1,7 @@
 // Copyright 2019 CryptoGarage
 
+#include <iostream>
+
 #include "cfd/cfd_transaction.h"
 #include "cfdcore/cfdcore_amount.h"
 #include "cfdcore/cfdcore_ecdsa_adaptor.h"
@@ -86,13 +88,13 @@ const std::vector<TxInputInfo> LOCAL_INPUTS_INFO = {TxInputInfo{
         Txid(
             "83266d6b22a9babf6ee469b88fd0d3a0c690525f7c903aff22ec8ee44214604f"),
         0, 0),
-    108}};
+    107, 5}};
 const std::vector<TxInputInfo> REMOTE_INPUTS_INFO = {TxInputInfo{
     TxIn(
         Txid(
             "bc92a22f07ef23c53af343397874b59f5f8c0eb37753af1d1a159a2177d4bb98"),
         0, 0),
-    108}};
+    107, 6}};
 const std::vector<TxIn> LOCAL_INPUTS = {TxIn(
     Txid("83266d6b22a9babf6ee469b88fd0d3a0c690525f7c903aff22ec8ee44214604f"), 0,
     0)};
@@ -117,29 +119,33 @@ const Address REMOTE_FINAL_ADDRESS(
 
 const PartyParams LOCAL_PARAMS = {LOCAL_FUND_PUBKEY,
                                   LOCAL_CHANGE_ADDRESS.GetLockingScript(),
+                                  1,
                                   LOCAL_FINAL_ADDRESS.GetLockingScript(),
+                                  4,
                                   LOCAL_INPUTS_INFO,
                                   LOCAL_INPUT_AMOUNT,
                                   LOCAL_COLLATERAL_AMOUNT};
 
 const PartyParams REMOTE_PARAMS = {REMOTE_FUND_PUBKEY,
                                    REMOTE_CHANGE_ADDRESS.GetLockingScript(),
+                                   3,
                                    REMOTE_FINAL_ADDRESS.GetLockingScript(),
+                                   2,
                                    REMOTE_INPUTS_INFO,
                                    REMOTE_INPUT_AMOUNT,
                                    REMOTE_COLLATERAL_AMOUNT};
 const ByteData FUND_TX_HEX(
     "020000000001024f601442e48eec22ff3a907c5f5290c6a0d3d08fb869e46ebfbaa9226b6d"
     "26830000000000ffffffff98bbd477219a151a1daf5377b30e8c5f9fb574783943f33ac523"
-    "ef072fa292bc0000000000ffffffff03aac2eb0b000000002200209b984c7bae3efddc3a3f"
-    "0a20ff81bfe89ed1fe07ff13e562149ee654bed845db2d10102401000000160014fa3629f3"
-    "060b6c1a5a365c30bf66fa00f155cb9e2d1010240100000016001465d4d622585baf5151de"
-    "860b1e7af58710f20da20247304402206d7181ec4d126c5e6bbf5ae65ee0297610f4f0d28a"
-    "03ba6d782e651b136a6bd502200458622a92e2df148f90df85a2ebc402dd3aef43a10821c1"
-    "6e8739426ba808a00121022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8"
-    "d569b240efe402473044022007e59c38bc05ac886b52f29147af2dd9f5a2f15188b02c0fc7"
-    "7c2c42aa81bb7b022079da7f996b92ad4c5323c3e403c36dca967c7a3787cf7ac32b419f07"
-    "5cbfdd1d012103fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a146029"
+    "ef072fa292bc0000000000ffffffff035a0f102401000000160014fa3629f3060b6c1a5a36"
+    "5c30bf66fa00f155cb9e5a0f10240100000016001465d4d622585baf5151de860b1e7af587"
+    "10f20da254c3eb0b000000002200209b984c7bae3efddc3a3f0a20ff81bfe89ed1fe07ff13"
+    "e562149ee654bed845db02473044022066ac18e345c85e6f08be76d42622a2d11ad68f792b"
+    "ce32c4d06679255a400623022011914f1bd361ec2b1769d4b5711194470f446af90ae9cf9e"
+    "a8eabda1b10af70c0121022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8"
+    "d569b240efe4024730440220032cc101c5e71a37ab5100fdf48549e335440b19e71755bb7a"
+    "4fd750f1d9e22302201ed839e2877b5bf5a131abb54b45c0028cfffd39a1d5def8929799bd"
+    "495fd1c4012103fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a146029"
     "755600000000");
 const ByteData FUND_TX_WITH_PREMIUM_HEX(
     "02000000024f601442e48eec22ff3a907c5f5290c6a0d3d08fb869e46ebfbaa9226b6d2683"
@@ -186,6 +192,8 @@ const ByteData REFUND_HEX(
 
 const Address PREMIUM_DEST("bcrt1qxyzqgxhnnhwtp9m0n2m9ygqp7zt2lckwvxx4jq");
 const Amount OPTION_PREMIUM = Amount::CreateBySatoshiAmount(100000);
+const uint32_t FEE_RATE = 2;
+const uint32_t FUND_OUTPUT_SERIAL_ID = 100;
 
 TEST(DlcManager, FundTransactionTest) {
   // Arrange
@@ -195,11 +203,9 @@ TEST(DlcManager, FundTransactionTest) {
 
   // Act
   auto fund_tx = DlcManager::CreateFundTransaction(
-      LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
-      local_change_output, REMOTE_INPUTS, remote_change_output);
+      LOCAL_PARAMS, REMOTE_PARAMS, FEE_RATE, FUND_OUTPUT_SERIAL_ID);
   auto fund_tx2 = DlcManager::CreateFundTransaction(
-      LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
-      local_change_output, REMOTE_INPUTS, remote_change_output);
+      LOCAL_PARAMS, REMOTE_PARAMS, FEE_RATE, FUND_OUTPUT_SERIAL_ID);
   auto local_utxo_txid = LOCAL_INPUTS[0].GetTxid();
   auto local_utxo_vout = LOCAL_INPUTS[0].GetVout();
   auto remote_utxo_txid = REMOTE_INPUTS[0].GetTxid();
@@ -232,9 +238,9 @@ TEST(DlcManager, FundTransactionTest) {
     EXPECT_NO_THROW(fund_tx.GetTxIn(it->GetTxid(), it->GetVout()));
   }
 
-  EXPECT_EQ(FUND_OUTPUT, fund_tx.GetTransaction().GetTxOut(0).GetValue());
+  EXPECT_EQ(FUND_OUTPUT, fund_tx.GetTransaction().GetTxOut(2).GetValue());
+  EXPECT_EQ(change, fund_tx.GetTransaction().GetTxOut(0).GetValue());
   EXPECT_EQ(change, fund_tx.GetTransaction().GetTxOut(1).GetValue());
-  EXPECT_EQ(change, fund_tx.GetTransaction().GetTxOut(2).GetValue());
   EXPECT_EQ(FUND_TX_HEX.GetHex(), fund_tx.GetTransaction().GetHex());
   EXPECT_TRUE(DlcManager::VerifyFundTxSignature(
       fund_tx, local_signature, LOCAL_INPUT_PUBKEY, local_utxo_txid,
@@ -252,8 +258,8 @@ TEST(DlcManager, CetTest) {
   TxOut local_output(local_payout, LOCAL_FINAL_ADDRESS);
   TxOut remote_output(remote_payout, REMOTE_FINAL_ADDRESS);
   // Act
-  auto cet =
-      DlcManager::CreateCet(local_output, remote_output, FUND_TX_ID, 0, 0);
+  auto cet = DlcManager::CreateCet(local_output, 0, remote_output, 1,
+                                   FUND_TX_ID, 0, 0);
 
   auto fund_script = DlcManager::CreateFundTxLockingScript(LOCAL_FUND_PUBKEY,
                                                            REMOTE_FUND_PUBKEY);
@@ -324,7 +330,8 @@ TEST(DlcManager, CreateDlcTransactions) {
 
   // Act
   auto dlc_transactions = DlcManager::CreateDlcTransactions(
-      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1);
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1,
+      FUND_OUTPUT_SERIAL_ID);
   auto fund_tx = dlc_transactions.fund_transaction;
   DlcManager::SignFundTransactionInput(&fund_tx, LOCAL_INPUT_PRIVKEY,
                                        LOCAL_INPUTS[0].GetTxid(), 0,
@@ -437,14 +444,14 @@ TEST(DlcManager, CreateCetTransactionNotEnoughInputTest) {
   auto remote_params_short = LOCAL_PARAMS;
   remote_params_short.input_amount = Amount::CreateBySatoshiAmount(1000);
   // Act/Assert
-  ASSERT_THROW(
-      auto dlc_transactions = DlcManager::CreateDlcTransactions(
-          outcomes, local_params_short, REMOTE_PARAMS, REFUND_LOCKTIME, 1),
-      CfdException);
-  ASSERT_THROW(
-      auto dlc_transactions = DlcManager::CreateDlcTransactions(
-          outcomes, remote_params_short, REMOTE_PARAMS, REFUND_LOCKTIME, 1),
-      CfdException);
+  ASSERT_THROW(auto dlc_transactions = DlcManager::CreateDlcTransactions(
+                   outcomes, local_params_short, REMOTE_PARAMS, REFUND_LOCKTIME,
+                   1, FUND_OUTPUT_SERIAL_ID),
+               CfdException);
+  ASSERT_THROW(auto dlc_transactions = DlcManager::CreateDlcTransactions(
+                   outcomes, remote_params_short, REMOTE_PARAMS,
+                   REFUND_LOCKTIME, 1, FUND_OUTPUT_SERIAL_ID),
+               CfdException);
 }
 
 TEST(DlcManager, FundTransactionWithPremiumTest) {
@@ -456,9 +463,8 @@ TEST(DlcManager, FundTransactionWithPremiumTest) {
 
   // Act
   auto fund_tx = DlcManager::CreateFundTransaction(
-      LOCAL_FUND_PUBKEY, REMOTE_FUND_PUBKEY, FUND_OUTPUT, LOCAL_INPUTS,
-      local_change_output, REMOTE_INPUTS, remote_change_output, PREMIUM_DEST,
-      OPTION_PREMIUM);
+      LOCAL_PARAMS, REMOTE_PARAMS, FEE_RATE, FUND_OUTPUT_SERIAL_ID,
+      PREMIUM_DEST, OPTION_PREMIUM);
 
   EXPECT_EQ(FUND_TX_WITH_PREMIUM_HEX.GetHex(), fund_tx.GetHex());
   EXPECT_EQ(FUND_OUTPUT, fund_tx.GetTransaction().GetTxOut(0).GetValue());
@@ -475,8 +481,8 @@ TEST(DlcManager, CreateDlcTransactionsWithPremium) {
 
   // Act
   auto dlc_transactions = DlcManager::CreateDlcTransactions(
-      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
-      OPTION_PREMIUM);
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1,
+      FUND_OUTPUT_SERIAL_ID, PREMIUM_DEST, OPTION_PREMIUM);
   auto fund_tx = dlc_transactions.fund_transaction;
 
   // Assert
@@ -495,9 +501,9 @@ TEST(DlcManager, CreateDlcTransactionsWithPremiumEmptyDestAddressFails) {
                                       {LOSE_AMOUNT, WIN_AMOUNT}};
 
   // Act/Assert
-  EXPECT_THROW(DlcManager::CreateDlcTransactions(outcomes, LOCAL_PARAMS,
-                                                 REMOTE_PARAMS, REFUND_LOCKTIME,
-                                                 1, Address(), OPTION_PREMIUM),
+  EXPECT_THROW(DlcManager::CreateDlcTransactions(
+                   outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1,
+                   FUND_OUTPUT_SERIAL_ID, Address(), OPTION_PREMIUM),
                CfdException);
 }
 
@@ -505,8 +511,8 @@ TEST(DlcManager, AdaptorSigTest) {
   std::vector<DlcOutcome> payouts = {{WIN_AMOUNT, LOSE_AMOUNT},
                                      {LOSE_AMOUNT, WIN_AMOUNT}};
   auto dlc_transactions = DlcManager::CreateDlcTransactions(
-      payouts, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
-      OPTION_PREMIUM);
+      payouts, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1,
+      FUND_OUTPUT_SERIAL_ID, PREMIUM_DEST, OPTION_PREMIUM);
   auto fund_transaction = dlc_transactions.fund_transaction;
   auto cets = dlc_transactions.cets;
   auto cet0 = cets[0];
@@ -538,8 +544,8 @@ TEST(DlcManager, AdaptorSigMultipleNonces) {
   std::vector<DlcOutcome> outcomes = {{WIN_AMOUNT, LOSE_AMOUNT},
                                       {LOSE_AMOUNT, WIN_AMOUNT}};
   auto dlc_transactions = DlcManager::CreateDlcTransactions(
-      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1, PREMIUM_DEST,
-      OPTION_PREMIUM);
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 1,
+      FUND_OUTPUT_SERIAL_ID, PREMIUM_DEST, OPTION_PREMIUM);
   auto fund_transaction = dlc_transactions.fund_transaction;
   auto cets = dlc_transactions.cets;
   auto cet0 = cets[0];
@@ -566,4 +572,19 @@ TEST(DlcManager, AdaptorSigMultipleNonces) {
       adapted_sig, LOCAL_FUND_PUBKEY, fund_txid, 0, lock_script, SigHashType(),
       fund_amount, WitnessVersion::kVersion0);
   EXPECT_TRUE(is_valid);
+}
+
+TEST(DlcManager, CreateDlcTransactionsCompat) {
+  // Arrange
+  std::vector<DlcOutcome> outcomes = {
+      {Amount::CreateByCoinAmount(2), Amount::CreateByCoinAmount(0)},
+      {Amount::CreateByCoinAmount(0), Amount::CreateByCoinAmount(2)}};
+
+  // Act
+  auto dlc_transactions = DlcManager::CreateDlcTransactions(
+      outcomes, LOCAL_PARAMS, REMOTE_PARAMS, REFUND_LOCKTIME, 2,
+      FUND_OUTPUT_SERIAL_ID);
+  auto fund_tx = dlc_transactions.fund_transaction;
+  //   std::cout << fund_tx.GetHex() << std::endl;
+  std::cout << dlc_transactions.refund_transaction.GetHex() << std::endl;
 }
