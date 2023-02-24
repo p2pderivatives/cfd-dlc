@@ -209,8 +209,12 @@ TransactionController DlcManager::CreateRefundTransaction(
     uint32_t fund_vout) {
   auto transaction_controller = TransactionController(TX_VERSION, lock_time);
   transaction_controller.AddTxIn(fund_tx_id, fund_vout);
-  transaction_controller.AddTxOut(local_final_script_pubkey, local_amount);
-  transaction_controller.AddTxOut(remote_final_script_pubkey, remote_amount);
+  if (local_amount >= DUST_LIMIT) {
+    transaction_controller.AddTxOut(local_final_script_pubkey, local_amount);
+  }
+  if (remote_amount >= DUST_LIMIT) {
+    transaction_controller.AddTxOut(remote_final_script_pubkey, remote_amount);
+  }
   return transaction_controller;
 }
 
